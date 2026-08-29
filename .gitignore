@@ -1,0 +1,29 @@
+# Generated simulation data — large, reproducible from scripts/generate_dataset.py
+data/synthetic/_staged/
+data/synthetic/train/
+data/synthetic/val/
+data/synthetic/test_id/
+data/synthetic/test_ood/
+data/synthetic/manifest.csv
+*.npz
+*.betse.gz
+
+# Model artefacts
+outputs/
+*.pt
+
+# Run logs from the generation job (director-log.md is tracked deliberately)
+gen_full.log
+*.log
+!logs/director-log.md
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+processed/
+raw/
+
+# OS / editor
+.DS_Store
+.claude/
