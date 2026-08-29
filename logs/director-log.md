@@ -720,3 +720,105 @@ because the run was long enough to invite a second look.
 Tests passing: 92/92. Generation continuing unchanged, ~3900/13800.
 Target redefined in documentation; no code changed.
 Current tier: 3 | Scaffold: full
+
+---
+
+## [Session 3] Fixing the out-of-distribution split
+
+Asked what failures I was watching for, I traced the status taxonomy and noticed, while reasoning
+about it, that `BETSEGenerator` reduces the (n_cells, 8) density array to 8 column means. Measured
+immediately:
+
+    spatial_gradient      raw per-cell std 8.72  -> stored std 0.00
+    exogenous_expression  raw per-cell std 45.04 -> stored std 0.00
+    channel_blockade      uniform by construction -> survives
+    gj_blockade           does not touch densities -> survives
+
+Two of the four out-of-distribution types were being stored as uniform tissues. `test_ood` would
+have contained 1,000 samples that were baselines with a shifted mean, and generalization scores
+would have read better than the truth. Separately `channel_densities_to_betse` clamped at 1.0, so a
+4x overexpression was simulated as 1x while the stored feature said 4x.
+
+**All 10,551 baselines were unaffected** — `ConfigSampler` tiles one row for baselines, so the mean
+reduction is lossless there, and sampled densities never exceed their maxima so nothing clamped. And
+no perturbation record existed yet: they start at simulation 11,500.
+
+### Two infrastructure obstacles, both real
+
+**The 7B could not run at all while the job ran.** Ollama returned
+`timed out waiting for llama-server to start`. The director cannot write code, so this was a hard
+block: the fix could not be written until the run stopped. The run was paused (10,551 npz against
+10,551 csv rows, exactly consistent, nothing lost).
+
+**Windows ephemeral port exhaustion.** With the machine idle the failure persisted, now as
+`dial tcp 127.0.0.1:49152: Only one usage of each socket address is normally permitted`. Measured:
+
+    dynamic port range   49152-65535 = 16,384 ports
+    TimeWait             25,010
+    ...to remote port 49672  12,982
+
+25,010 stuck sockets against a 16,384-port range, and they did not drain — 25010, 25010, 25011 over
+150 seconds. The ~13,000 to one local port matches loky's socket-based worker IPC on Windows, one
+per dispatched task across ~13,800 tasks. **The generation run exhausts the ephemeral port pool, and
+would eventually have broken itself, not just Ollama.** Fixed by widening the range to 20000-65535
+(`netsh int ipv4 set dynamicport tcp start=20000 num=45535`; revert with `start=49152 num=16384`).
+This must be set before any future full run.
+
+### The fix
+
+BETSE exposes five tissue-profile picker types, one of which is `INDICES`, taking an explicit list
+of cell indices with its own diffusion constants; and the configuration states outright that tissue
+profiles may be altered after the `seed` stage. That resolves the ordering problem, since cell
+indices do not exist until the mesh is meshed.
+
+`BETSEGenerator` now runs `seed`, reads the mesh, resamples densities onto real cell positions by
+spatial rank, groups cells into up to 8 bands by their most variable channel, appends one tissue
+profile per band, then runs `init` and `sim`, and stores the per-cell densities actually simulated.
+
+Developed and tested entirely in a separate `~/nexus-dev` tree so the paused production tree was
+never touched until the suite was green.
+
+### Two failures found by testing, both instructive
+
+**`KeyError: 'Spot'`.** The first version deleted the shipped tissue profiles before appending its
+own. BETSE's `general network` section refers to the profile named `Spot` by name, so the reference
+dangled and `init` aborted. The configuration states that later profiles override earlier ones for
+the same cell, so appending rather than replacing keeps `Spot` resolvable while the new profiles
+still win. One line removed.
+
+**A fix that was worse than the bug.** The corrected version produced a spatial_gradient on NaKATP:
+the gradient stored faithfully (corr(x, density) = 0.995) but Vmem barely moved, 0.351 mV, and that
+was mesh boundary variation rather than a response. A tissue profile carries only Dm_Na, Dm_K, Dm_Cl
+and Dm_Ca. Kir and K_leak drive globally-scoped channel entries; NaKATP drives a global internal
+parameter. Only Nav, Ca and Cl can vary per cell.
+
+Storing an input that varies while its target does not respond is **worse** than storing a uniform
+one — it would teach the model that such gradients have no effect. `ConfigSampler` now restricts
+spatial_gradient and exogenous_expression to `SPATIAL_CHANNEL_INDICES = (0, 3, 4)`. That is a
+deliberate narrowing of PRD §4.1.1, recorded in the dataset card, taken because the alternative was
+letting half of those perturbations be silently inert.
+
+### Verification
+
+    spatial_gradient  (Cl)   corr(x,density) 0.995   corr(density,Vmem) -0.736
+    spatial_gradient  (Nav)  corr(x,density) 0.997   corr(density,Vmem)  0.997   Vmem -80.18..-51.95 mV
+    exogenous_expr    (Cl)   corr(x,density) -0.744  corr(density,Vmem) -0.813
+    baseline base_000000     max |dVmem| vs the pre-change result = 0.000e+00 mV   BIT-IDENTICAL
+
+Full suite in the dev tree: **92 passed in 357s**. Only then was it deployed and the run resumed:
+`Total configurations to run: 3249, Already done: 10551, Jobs: 12`.
+
+### Task ledger
+
+| # | File | Result |
+|---|---|---|
+| 3.1 | `betse_config.py` (+FRAC_MAX, +group_cells_by_density) | pass, 1st attempt |
+| 3.2 | `betse_config.py` (+resample_densities_to_mesh) | pass, 1st attempt |
+| 3.3 | `betse_generator.py` (seed/profiles/init split) | KeyError 'Spot' — replaced profiles instead of appending |
+| 3.4 | `betse_generator.py` | pass |
+| 3.5 | `config_sampler.py` (spatial channel restriction) | pass, 1st attempt |
+
+### Coherence State
+Tests passing: 92/92 (dev tree, deployed to production).
+Generation resumed: 10,551 done, 3,249 remaining.
+Current tier: 3 | Scaffold: full

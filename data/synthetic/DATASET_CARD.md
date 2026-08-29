@@ -108,3 +108,82 @@ was produced by the identical protocol at the identical simulated time.
 Assigned by `scripts/finalize_dataset.py`, sorted by `config_id` for determinism.
 Train 8000 / val 1000 / test_id 1000 from baseline configurations; test_ood 2000 from perturbations,
 capped at 500 per type. No `config_id` appears in more than one split.
+
+---
+
+# Revision: per-cell spatial perturbations
+
+Applied after 10,551 baseline simulations had been generated. Baseline results are unaffected and
+were verified bit-for-bit identical across the change.
+
+## What was wrong
+
+`BETSEGenerator` reduced the (n_cells, 8) density array to 8 column means, because BETSE's default
+tissue profile applies one diffusion constant to every cell. Measured on sampled configurations:
+
+    spatial_gradient      raw per-cell std 8.72  -> stored std 0.00
+    exogenous_expression  raw per-cell std 45.04 -> stored std 0.00
+
+Two of the four out-of-distribution perturbation types were therefore stored as uniform tissues.
+`test_ood` would have held 1,000 samples that were really baselines with a shifted mean, and OOD
+scores would have looked better than they were. Separately, `channel_densities_to_betse` clamped
+every density fraction at 1.0, so a 4x overexpression was simulated as a 1x density while the stored
+feature said 4x — an input that disagreed with its own target.
+
+## What changed
+
+BETSE tissue profiles accept a `cell targets` block of type `indices`, listing explicit cell indices
+with their own diffusion constants, and the configuration permits profiles to be rewritten after the
+`seed` stage. `BETSEGenerator` now runs `seed` first, reads the mesh BETSE actually built, resamples
+the requested densities onto real cell positions, groups cells into up to 8 bands by their most
+variable channel, writes one tissue profile per band, and only then runs `init` and `sim`. The
+record stores the per-cell densities that were actually simulated. `FRAC_MAX` was raised from 1.0
+to 4.0 so an overexpression reaches the simulator.
+
+Verified end to end:
+
+    spatial_gradient  (Cl)   corr(x, density) 0.995   corr(density, Vmem) -0.736
+    spatial_gradient  (Nav)  corr(x, density) 0.997   corr(density, Vmem)  0.997   Vmem -80.18 to -51.95 mV
+    exogenous_expr    (Cl)   corr(x, density) -0.744  corr(density, Vmem) -0.813
+    baseline                 max |dVmem| against the pre-change result = 0.000e+00 mV
+
+A uniform tissue still collapses to a single group and writes no profiles, which is why baselines
+take the unchanged code path.
+
+## The constraint this exposes, and the narrowing it forced
+
+A BETSE tissue profile carries only `Dm_Na`, `Dm_K`, `Dm_Cl` and `Dm_Ca`. Tracing each sampled
+channel to the parameter it drives:
+
+| channel | BETSE parameter | can vary per cell |
+|---|---|---|
+| Nav | `Dm_Na` | **yes** |
+| Ca | `Dm_Ca` | **yes** |
+| Cl | `Dm_Cl` | **yes** |
+| Kir | `Kir2p1` channel `max Dm` | no, global |
+| K_leak | `K_Leak` channel `max Dm` | no, global |
+| NaKATP | `alpha_NaK` in internal parameters | no, global |
+
+The first attempt at the fix produced a spatial_gradient on **NaKATP**: the gradient was stored
+faithfully (corr 0.995) but every tissue profile received identical diffusion constants, so the
+simulation was uniform and the 0.351 mV Vmem spread was mesh boundary variation, not a response.
+Storing a varying input whose target does not respond is worse than storing a uniform one, because
+it would teach a model that such gradients have no effect.
+
+**`ConfigSampler` therefore restricts `spatial_gradient` and `exogenous_expression` to Nav, Ca and
+Cl** (`SPATIAL_CHANNEL_INDICES = (0, 3, 4)`). This is a deliberate narrowing of PRD §4.1.1, which
+does not restrict which channel a spatial perturbation targets. The alternative was to let roughly
+half of those perturbations be silently inert.
+
+`channel_blockade` is unrestricted and still draws from all six mapped channels, because a blockade
+sets a channel to zero uniformly and a uniform change is expressible for every one of them.
+
+Nav produces by far the strongest response, consistent with the earlier finding that Vmem is
+governed by `Dm_Na`: a Nav gradient spans roughly 28 mV across the tissue, while Cl and Ca gradients
+move it under 1 mV.
+
+## Consequence for evaluating the OOD split
+
+All four perturbation types are now genuine generalization tests. Effect sizes differ sharply by
+channel, so per-type OOD error should not be compared without noting which channel each
+configuration perturbed; a Cl gradient is a far smaller departure from baseline than a Nav one.

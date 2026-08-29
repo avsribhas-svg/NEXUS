@@ -1,4 +1,5 @@
 import os
+import copy
 import glob
 import time
 import shutil
@@ -11,6 +12,8 @@ from nexus.data.betse_config import (
     normalize_channel_densities,
     channel_densities_to_betse,
     gj_conductance_to_surface_area,
+    group_cells_by_density,
+    resample_densities_to_mesh,
 )
 
 class BETSEGenerator:
@@ -86,12 +89,55 @@ class BETSEGenerator:
             with open(cfg_path, "w") as f:
                 yaml.dump(y, f)
 
-            for stage in ("seed", "init", "sim"):
+            # PART A: Run only the seed stage
+            remaining = timeout_s - (time.time() - t_start)
+            if remaining <= 0:
+                return None
+            proc = subprocess.run(["betse", "--log-file", log_path, "seed", "config.yaml"],
+                                  cwd=sim_dir, capture_output=True, text=True, timeout=remaining)
+            if proc.returncode != 0:
+                return None
+
+            # PART B: Read the mesh that seed just built, and write per-cell tissue profiles
+            from betse.lib.pickle import pickles
+            world_files = sorted(glob.glob(os.path.join(sim_dir, "INITS", "world_*.betse.gz")))
+            if not world_files:
+                return None
+            world = pickles.load(world_files[0])
+            mesh_cells = world[0]
+            centres = np.asarray(mesh_cells.cell_centres, dtype=np.float64)
+
+            per_cell = resample_densities_to_mesh(config["channel_densities"], centres)
+            groups = group_cells_by_density(per_cell, n_groups=8)
+
+            if len(groups) > 1:
+                prof_list = y["tissue profile definition"]["tissue"]["profiles"]
+                template = copy.deepcopy(prof_list[0])
+                new_profiles = []
+                for gi, (indices, group_densities) in enumerate(groups):
+                    prof = copy.deepcopy(template)
+                    prof["name"] = "grp_%d" % gi
+                    prof["insular"] = False
+                    prof["cell targets"]["type"] = "indices"
+                    prof["cell targets"]["indices"] = [int(i) for i in indices]
+                    gp = channel_densities_to_betse(group_densities)
+                    prof["diffusion constants"]["Dm_Na"] = float(gp["Dm_Na"])
+                    prof["diffusion constants"]["Dm_K"] = float(gp["Dm_K"])
+                    prof["diffusion constants"]["Dm_Cl"] = float(gp["Dm_Cl"])
+                    prof["diffusion constants"]["Dm_Ca"] = float(gp["Dm_Ca"])
+                    new_profiles.append(prof)
+                for prof in new_profiles:
+                    prof_list.append(prof)
+                with open(cfg_path, "w") as f:
+                    yaml.dump(y, f)
+
+            # PART C: Run the remaining two stages
+            for stage in ("init", "sim"):
                 remaining = timeout_s - (time.time() - t_start)
                 if remaining <= 0:
                     return None
-                proc = subprocess.run(["betse", "--log-file", log_path, stage, "config.yaml"], cwd=sim_dir,
-                                      capture_output=True, text=True, timeout=remaining)
+                proc = subprocess.run(["betse", "--log-file", log_path, stage, "config.yaml"],
+                                      cwd=sim_dir, capture_output=True, text=True, timeout=remaining)
                 if proc.returncode != 0:
                     return None
 
@@ -108,7 +154,7 @@ class BETSEGenerator:
             keep = nn[:, 0] != nn[:, 1]
             edge_index = nn[keep].T.astype(np.int64)
             gjopen = np.asarray(sim.gjopen, dtype=np.float64)[keep]
-            conductances = (gjopen * gj_conductance).astype(np.float64)
+            conductances = (gjopen * gj_conductance).astype(np.float32)
             n_cells_actual = int(vmem.shape[0])
 
             vm_series = getattr(sim, "vm_ave_time", None)
@@ -126,9 +172,12 @@ class BETSEGenerator:
             if capture_timeseries and vm_series is not None and len(vm_series) > 0:
                 timeseries = (np.asarray(vm_series, dtype=np.float64) * 1000.0).astype(np.float32)
 
-            density_row = np.array([densities[k] for k in
-                ["Nav", "Kir", "K_leak", "Ca", "Cl", "NaKATP", "HKATP", "VATP"]], dtype=np.float32)
-            channel_densities = np.tile(density_row, (n_cells_actual, 1)).astype(np.float32)
+            if per_cell.shape[0] == n_cells_actual:
+                channel_densities = per_cell.astype(np.float32)
+            else:
+                density_row = np.array([densities[k] for k in
+                    ["Nav", "Kir", "K_leak", "Ca", "Cl", "NaKATP", "HKATP", "VATP"]], dtype=np.float32)
+                channel_densities = np.tile(density_row, (n_cells_actual, 1)).astype(np.float32)
 
             import betse
             return {
