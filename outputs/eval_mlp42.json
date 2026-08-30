@@ -1,0 +1,140 @@
+{
+  "arch": "mlp",
+  "checkpoint": "outputs\\mlp_seed42\\final.pt",
+  "splits": {
+    "test_id": {
+      "n_cells": 187567,
+      "mae": 0.8119361996650696,
+      "r2": 0.9802781343460083
+    },
+    "test_ood": {
+      "n_cells": 378231,
+      "mae": 1.216481328010559,
+      "r2": 0.9682517051696777
+    }
+  },
+  "degree": {
+    "test_id": [
+      {
+        "degree": 2,
+        "n": 673,
+        "mae": 0.33655038475990295
+      },
+      {
+        "degree": 3,
+        "n": 15286,
+        "mae": 0.29322129487991333
+      },
+      {
+        "degree": 4,
+        "n": 17570,
+        "mae": 0.2994910776615143
+      },
+      {
+        "degree": 5,
+        "n": 10632,
+        "mae": 0.32631415128707886
+      },
+      {
+        "degree": 6,
+        "n": 143406,
+        "mae": 0.9682462811470032
+      }
+    ],
+    "test_ood": [
+      {
+        "degree": 2,
+        "n": 1272,
+        "mae": 0.8199570178985596
+      },
+      {
+        "degree": 3,
+        "n": 30665,
+        "mae": 0.9282378554344177
+      },
+      {
+        "degree": 4,
+        "n": 35601,
+        "mae": 0.9429812431335449
+      },
+      {
+        "degree": 5,
+        "n": 21209,
+        "mae": 0.8942537903785706
+      },
+      {
+        "degree": 6,
+        "n": 289484,
+        "mae": 1.3060002326965332
+      }
+    ]
+  },
+  "paired": {
+    "test_id": {
+      "n_graphs": 1000,
+      "boundary_mae": 0.32394129037857056,
+      "interior_mae": 0.948823094367981,
+      "mean_paired_difference": 0.6248818635940552
+    },
+    "test_ood": {
+      "n_graphs": 2000,
+      "boundary_mae": 0.9728227257728577,
+      "interior_mae": 1.3757719993591309,
+      "mean_paired_difference": 0.4029492735862732
+    }
+  },
+  "ood": {
+    "channel_blockade / Ca": {
+      "n": 15299,
+      "mae": 0.891614556312561
+    },
+    "channel_blockade / Cl": {
+      "n": 16956,
+      "mae": 0.709873378276825
+    },
+    "channel_blockade / K_leak": {
+      "n": 15442,
+      "mae": 1.3771400451660156
+    },
+    "channel_blockade / Kir": {
+      "n": 13399,
+      "mae": 1.3241645097732544
+    },
+    "channel_blockade / NaKATP": {
+      "n": 16931,
+      "mae": 0.8917925953865051
+    },
+    "channel_blockade / Nav": {
+      "n": 14902,
+      "mae": 1.3210748434066772
+    },
+    "exogenous_expression / Ca": {
+      "n": 30635,
+      "mae": 0.9873337745666504
+    },
+    "exogenous_expression / Cl": {
+      "n": 34153,
+      "mae": 1.4158495664596558
+    },
+    "exogenous_expression / Nav": {
+      "n": 28769,
+      "mae": 3.692470073699951
+    },
+    "gj_blockade / none": {
+      "n": 95120,
+      "mae": 1.1153204441070557
+    },
+    "spatial_gradient / Ca": {
+      "n": 30802,
+      "mae": 0.5321542024612427
+    },
+    "spatial_gradient / Cl": {
+      "n": 29732,
+      "mae": 0.5771100521087646
+    },
+    "spatial_gradient / Nav": {
+      "n": 36091,
+      "mae": 1.0021641254425049
+    }
+  }
+}

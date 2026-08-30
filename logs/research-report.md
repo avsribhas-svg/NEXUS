@@ -44,12 +44,14 @@ Four sub-claims, each independently testable:
 | # | Claim | Metric | Status |
 |---|---|---|---|
 | C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met, but see §11** |
-| C2 | Graph structure is necessary | MPNN beats density-only MLP | **In progress** |
-| C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **In progress** |
+| C2 | Graph structure is necessary | MPNN beats density-only MLP | **Not supported — 6.3% margin for 25× the parameters (§10.3)** |
+| C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met on tolerance, but see §10.5** |
 | C4 | Speedup over simulator | inference vs 117.2 s/tissue | **Met, trivially** |
 
-C1 is met but the result is not meaningful in the way it appears to be. §11 explains why, and
-that explanation is the main scientific content of this report so far.
+C1 and C4 are met comfortably. **C2 is not supported**, and §11 argues that the experiment as
+designed could not have supported it: the training distribution contains no intra-tissue spatial
+variation, so the graph carries almost no information in-distribution. That argument, and the
+negative degree-control in §10.4, are the main scientific content of this report so far.
 
 ### 1.3 Why a graph network is the right hypothesis class
 
@@ -648,9 +650,11 @@ genuinely reads topology); `test_numerical.py` verifies that a symmetric input c
 yields a symmetric Vmem field. These are the tests that would catch a GNN that had silently
 degenerated into a per-node MLP.
 
-### 10.2 Baseline MLP on real BETSE data
+### 10.2 Baseline MLP, preliminary 2-epoch run
 
-Seed 42, 2 epochs, CPU, 16.5 s total training time, 26,625 parameters, no graph access:
+The first run on real data, kept here because it is what prompted the analysis in §11.
+Seed 42, 2 epochs, CPU, 16.5 s, 26,625 parameters, no graph access. **Not converged** — the
+converged comparison is §10.3.
 
 | split | MAE (mV) | R² |
 |---|---|---|
@@ -663,21 +667,127 @@ The 10%-of-range threshold on this dataset is approximately 8 mV. **The density-
 clears the Phase 1 accuracy criterion by a factor of eight, after two epochs, without ever
 seeing the graph.**
 
-### 10.3 MPNN
+### 10.3 MPNN vs baseline — both converged
 
-*Run in progress at time of writing (seed 42, CUDA, up to 200 epochs). Results to follow.*
+Seed 42, RTX 4050, identical training path, early stopping on validation MAE:
 
-The prediction this report commits to in advance, from the analysis in §11: MPNN `test_id` MAE
-should land **well below 0.97 mV** — the MLP's error is almost exactly the within-tissue Vmem
-standard deviation, which is the boundary-effect signal the MPNN can see and the MLP cannot.
-If the MPNN does *not* beat 0.97 mV, that is evidence of oversmoothing or of an optimization
-problem, not of the physics being pointwise.
+| | MLP | MPNN | MPNN advantage |
+|---|---|---|---|
+| Parameters | 26,625 | 663,553 | 25× more |
+| Sees the graph | **no** | yes | |
+| Epochs to early stop | 56 | 91 | |
+| Training time | 143 s | 1,621 s | 11× longer |
+| `test_id` MAE | 0.812 mV | **0.761 mV** | **6.3%** |
+| `test_id` R² | 0.9803 | 0.9810 | |
+| `test_ood` MAE | 1.216 mV | **1.164 mV** | **4.3%** |
+| `test_ood` R² | 0.9683 | 0.9692 | |
 
----
+**This is the headline result and it is close to a null.** A 664K-parameter graph network with
+full access to gap-junction topology and conductance beats a 27K-parameter model that sees only
+a cell's own channel densities by **6.3%** of MAE in-distribution and **4.3%** out-of-distribution,
+for 25× the parameters and 11× the training time.
 
+Both models clear the Phase 1 accuracy criterion (10% of range ≈ 8 mV) by roughly an order of
+magnitude. Claim C1 is met. **Claim C2 — that graph structure is necessary — is not supported by
+this experiment**, and §11 explains why the experiment as designed could not have supported it.
+
+An earlier 2-epoch MLP run (MAE 0.970) made the MPNN's margin look like 21%. That comparison was
+not fair: the MLP had not converged. Reported here because the unfair version is the one that
+flatters the hypothesis, and it is the number that would have been easy to publish by accident.
+
+### 10.4 Error by node degree — a control that came out negative
+
+`scripts/evaluate.py` groups per-cell error by node degree. In a Voronoi mesh, degree 6 is an
+interior cell and degree ≤ 5 is a boundary cell. Because boundary cells are exactly where
+gap-junction coupling is asymmetric, this was intended as a direct test of whether the MPNN
+learned coupling: if its advantage concentrated at the boundary, that would be evidence.
+
+`test_id`, per-cell MAE by degree:
+
+| degree | n cells | MLP MAE | MPNN MAE | MPNN advantage |
+|---|---|---|---|---|
+| 2 | 673 | 0.337 | 0.290 | 13.9% |
+| 3 | 15,286 | 0.293 | 0.256 | 12.6% |
+| 4 | 17,570 | 0.300 | 0.264 | 11.9% |
+| 5 | 10,632 | 0.326 | 0.288 | 11.7% |
+| **6 (interior)** | **143,406** | **0.968** | **0.914** | **5.6%** |
+
+Because degree correlates with tissue size, this is also computed **paired within each graph**,
+so between-tissue differences cannot contribute:
+
+| model | split | boundary MAE | interior MAE | mean paired difference |
+|---|---|---|---|---|
+| MLP | `test_id` | 0.324 | 0.949 | 0.625 |
+| MPNN | `test_id` | 0.276 | 0.881 | **0.605** |
+| MLP | `test_ood` | 0.973 | 1.376 | 0.403 |
+| MPNN | `test_ood` | 0.881 | 1.311 | **0.430** |
+
+**Interior cells are ~3× harder than boundary cells for both models.** This was the opposite of
+the prediction, and the control that interprets it is the MLP column: **the MLP cannot see node
+degree at all.** Within a uniform tissue it receives identical inputs for every cell and is
+mathematically constrained to emit one value. It therefore cannot be exploiting the boundary
+structure — yet it shows the same asymmetry at nearly the same magnitude (paired difference
+0.625 vs the MPNN's 0.605).
+
+**Conclusion: the boundary/interior asymmetry is a property of the data, not of message passing.**
+Since the MLP emits a single value *c* per tissue, its per-cell error decomposes as
+|V_cell − c|; the observed pattern means *c* sits close to the boundary cells' potential while
+interior cells carry more spread around it. In other words, within a spatially uniform tissue the
+**interior** Vmem field is less uniform than the rim — which is where the 1.33 mV of within-tissue
+variance in §11.1 actually lives. The mechanism is not established; mesh geometry (cell area and
+surface-to-volume ratio varying across the Voronoi tessellation) is the leading candidate and is
+testable directly from `cell_positions`.
+
+The one piece of evidence that survives for C2: **the MPNN's relative advantage is roughly twice
+as large at boundary cells (12–14%) as at interior cells (5.6%)**, and it narrows the
+boundary/interior gap slightly in-distribution. That is the pattern topology-awareness would
+produce. But the absolute effect is 0.04 mV, it is a single seed, and it goes the other way on
+`test_ood` (0.430 vs 0.403). It is suggestive at best and must not be reported as a positive
+result.
+
+### 10.5 OOD error by perturbation family and perturbed channel
+
+Aggregating `test_ood` into a single number hides everything that matters (§5.7). Broken out:
+
+| family / channel | n cells | MLP MAE | MPNN MAE | MPNN advantage |
+|---|---|---|---|---|
+| `exogenous_expression` / **Nav** | 28,769 | 3.693 | **3.304** | 10.5% |
+| `channel_blockade` / K_leak | 15,442 | 1.377 | 1.213 | 11.9% |
+| `channel_blockade` / Kir | 13,399 | 1.324 | 1.133 | **14.4%** |
+| `exogenous_expression` / Cl | 34,153 | 1.416 | 1.270 | 10.3% |
+| `channel_blockade` / Nav | 14,902 | 1.321 | 1.302 | 1.4% |
+| `gj_blockade` / — | 95,120 | 1.115 | **1.000** | 10.3% |
+| `exogenous_expression` / Ca | 30,635 | 0.987 | 1.463 | **−48%** |
+| `spatial_gradient` / **Nav** | 36,091 | 1.002 | 0.971 | 3.1% |
+| `channel_blockade` / NaKATP | 16,931 | 0.892 | 0.857 | 3.9% |
+| `channel_blockade` / Ca | 15,299 | 0.892 | 0.826 | 7.4% |
+| `channel_blockade` / Cl | 16,956 | 0.710 | 0.667 | 6.1% |
+| `spatial_gradient` / Cl | 29,732 | 0.577 | 0.590 | −2.2% |
+| `spatial_gradient` / Ca | 30,802 | 0.532 | 0.572 | −7.5% |
+
+Readings:
+
+- **The spread is 6.5× across the table** (0.53 to 3.69 mV). Any single aggregate OOD number is
+  an average over cases that differ by more than half an order of magnitude in difficulty.
+- **`exogenous_expression` / Nav is by far the hardest case** at 3.3 mV, ~4× the in-distribution
+  error. This is the family that combines spatial structure with input features at 4.0 when
+  training saw only [0, 1] (§11.4) — it is the only genuinely hard OOD case in the set.
+- **`spatial_gradient` / Ca and / Cl are easier than in-distribution data** (0.57, 0.59 vs 0.76).
+  This confirms §5.7 quantitatively: those perturbations barely move Vmem, so they are not
+  generalization tests at all. **Two thirds of the `spatial_gradient` split is not measuring
+  generalization.**
+- **The MPNN's largest wins are on `gj_blockade` (10.3%) and on Kir/K_leak blockade (14.4%,
+  11.9%)**. `gj_blockade` is the family where topology should matter most — the graph is
+  effectively severed — and it is one of the MPNN's better results. This is the second weak
+  signal in favour of C2.
+- **The MPNN is substantially *worse* on `exogenous_expression` / Ca (−48%)**, the one clear
+  regression. With a single seed this could be noise, but it is large enough that multi-seed
+  runs (Experiment D) are needed before any of this table is quoted.
 ## 11. Analysis: the training distribution has no spatial structure
 
-This is the central finding so far and it reframes every number in §10.
+This is the central finding and it reframes every number in §10. It was found by asking a single
+cheap question of the dataset — how much of the target variance is *within* a graph rather than
+*between* graphs — after the baseline scored implausibly well.
 
 ### 11.1 The measurement
 
@@ -783,16 +893,19 @@ of magnitude*, and the paper should give the measurement conditions rather than 
 
 | # | Experiment | Cost | What it decides |
 |---|---|---|---|
-| **A** | MPNN vs MLP on `test_id`, split into boundary vs interior cells | free (data exists) | Whether the MPNN learned gap-junction coupling. If its advantage concentrates at the boundary, that is direct evidence. |
-| **B** | OOD broken down by family **and** perturbed channel | free | Prevents the §5.7 aggregation artifact. |
+| ~~**A**~~ | MPNN vs MLP by node degree, paired within graph | done | **Negative** (§10.4). The boundary/interior asymmetry appears identically in the graph-blind MLP, so it is a property of the data. Weak residual signal: the MPNN's advantage is ~2× larger at boundary cells. |
+| ~~**B**~~ | OOD by family **and** perturbed channel | done | **Done** (§10.5). Difficulty spans 6.5×; two thirds of `spatial_gradient` is easier than in-distribution data. |
+| **A2** | Test the mesh-geometry explanation for §10.4 — regress within-tissue Vmem deviation on cell area and neighbour count | free | Would establish the mechanism behind the interior/boundary asymmetry. |
 | **C** | **Regenerate training data with intra-tissue spatial structure** | ≈ 27 h at 12 workers | The decisive fix for §11. Makes the graph informative in-distribution and turns MPNN-vs-MLP into a real test. |
 | **D** | Multi-seed runs (42/137/256) for both architectures | ≈ 2 h | Error bars. Currently *n* = 1. |
 | **E** | Train with `physics_auxiliary_loss` enabled | ≈ 1 h | Only meaningful after C. |
 | **F** | Message-passing depth sweep (K = 1, 2, 4, 6, 10) | ≈ 5 h | Measures the electrical coupling length; tests whether K = 6 is sufficient or excessive. |
 | **G** | Experimental validation against published *Xenopus* Vmem measurements | unscoped | The only test of whether BETSE itself is right. |
 
-Experiment C is the one that matters. Everything else refines a comparison that is currently
-not measuring what it is supposed to measure.
+Experiment C is the one that matters. Experiments A and B are now complete and both point the
+same way: the current comparison is not measuring what it was supposed to measure, and no amount
+of further analysis of these splits will change that. Everything else refines a comparison whose
+signal is bounded at ~1.33 mV of within-tissue variance.
 
 ---
 
@@ -818,6 +931,11 @@ not measuring what it is supposed to measure.
    fidelity to biology is assumed, not tested (Experiment G).
 10. **Single seed.** *n* = 1 for every number in §10. No error bars yet.
 11. **Per-cell metric weighting** means large tissues dominate the reported averages (§9).
+12. **The mechanism behind the interior/boundary error asymmetry is not established** (§10.4).
+    It is a property of the data, but which property is untested.
+13. **One OOD cell shows a large regression** — `exogenous_expression` / Ca, where the MPNN is
+    48% worse than the MLP (§10.5). Unexplained, and with *n* = 1 it cannot be distinguished
+    from noise.
 
 ---
 
@@ -959,10 +1077,36 @@ fail at hour 36.
 `nexus/data/config_sampler.py`. Functionally inert — pytest's `testpaths` is `tests/` — but
 wrong, and undetectable by the test suite. Caught by reading the source during report writing.
 
+**F7 — Invented conventions in place of stated ones.** Told to read files via
+`sorted(glob.glob(os.path.join(args.data, "test_ood", "*.npz")))`, the executor instead wrote
+`os.path.join(args.data, "test_ood", f"{i}.npz")` — substituting a plausible naming convention
+for the one specified. *Mitigation:* the same as F3; but note the executor had the correct line
+verbatim in its prompt and did not use it, which is a stronger failure than mis-inference.
+
+**F8 — Block relocation.** Told to add a statement inside a loop immediately after an existing
+line, the executor placed it after the loop instead and rewired it to iterate over the wrong
+collection (`report["splits"].items()`, which holds metric dicts, rather than the per-split
+prediction arrays). The code parsed and would have raised a `KeyError` at runtime.
+*Mitigation:* the F1 mitigation generalizes — specify the entire enclosing function verbatim
+rather than describing where a line goes. Doing so resolved both F7 and F8 in one round.
+
 The unifying pattern: **the executor's failures are local and syntactic, not architectural.**
-It does not misunderstand what an MPNN is. It drops a line, deletes a neighbor, or over-infers
-a type. These are exactly the failure modes a test suite catches — which is why the
-architecture works.
+It does not misunderstand what an MPNN is. It drops a line, deletes a neighbor, over-infers a
+type, or relocates a block. These are exactly the failure modes a test suite catches — which is
+why the architecture works, and why the two scripts *without* test coverage
+(`scripts/train.py`, `scripts/evaluate.py`) needed the most correction rounds of any files in
+the project. **Test coverage and correction cost are inversely related**, and that relationship
+is the strongest practical argument for writing the suite first.
+
+A quantified version, counting first-attempt outcomes on the files written in this session:
+
+| File | Test-covered | Correction rounds |
+|---|---|---|
+| `nexus/training/config.py` | yes | 0 |
+| `nexus/training/trainer.py` (device change) | yes | 1 |
+| `nexus/data/config_sampler.py` (cleanup) | yes | 0 |
+| `scripts/train.py` | **no** | 1 |
+| `scripts/evaluate.py` | **no** | **2** |
 
 ## 20. Director-error analysis
 
@@ -1051,17 +1195,30 @@ never touched.
 
 ## 24. Changelog
 
-**2026-08-30** — First training runs on real BETSE data.
+**2026-08-30** — First training runs on real BETSE data, and the first negative results.
 - Added GPU support to `TrainingConfig` / `Trainer` (`device` field, appended last to preserve
   all existing call sites). Full suite re-verified green at **92/92** including 5 BETSE
   integration tests, 498.6 s.
-- `scripts/train.py` written and running. MLP baseline: `test_id` MAE **0.970 mV**, R² **0.980**
-  after 2 epochs. MPNN training in progress.
+- `scripts/train.py` and `scripts/evaluate.py` written.
+- **Converged comparison (§10.3): MPNN `test_id` MAE 0.761 mV vs MLP 0.812 mV — a 6.3% margin
+  for 25× the parameters. Claim C2 is not supported.** An earlier unconverged 2-epoch MLP made
+  the margin look like 21%; that comparison is retained in §10.2 as a caution.
 - **Measured within-tissue vs across-tissue Vmem variance and identified the uniform-density
-  training distribution as the reason for the baseline's strength** (§11). This is the report's
-  central finding to date.
+  training distribution as the cause** (§11): per-cell density sd is exactly 0.000 in every
+  training tissue, and ~99% of Vmem variance is between tissues rather than within them.
+- **Degree control (§10.4) came out negative.** Interior cells are ~3× harder than boundary
+  cells for both models, paired within graph — but the graph-blind MLP shows the same asymmetry
+  at the same magnitude, so it is a property of the data, not of message passing. Residual weak
+  signal: the MPNN's advantage is ~2× larger at boundary cells.
+- **OOD cross-tabulated by family and perturbed channel (§10.5).** Difficulty spans 6.5×;
+  `spatial_gradient` / Ca and / Cl are *easier* than in-distribution data, confirming that two
+  thirds of that split does not test generalization. Hardest case is
+  `exogenous_expression` / Nav at 3.3 mV.
 - Identified the `exogenous_expression` input-range shift (features at 4.0 vs training [0, 1]).
-- Found `TestConfigSampler` pasted into `nexus/data/config_sampler.py` (F6); cleanup queued.
+- Removed `TestConfigSampler` from `nexus/data/config_sampler.py` (F6); suite re-verified.
+- New executor failure modes F7 (invented conventions) and F8 (block relocation), and the
+  observation that the two files without test coverage required the most correction rounds
+  (§19).
 - Documented GPU contention between training and the local executor (§21.2).
 - Report restructured into Part I (science) and Part II (methodology).
 
