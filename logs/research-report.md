@@ -44,7 +44,7 @@ Four sub-claims, each independently testable:
 | # | Claim | Metric | Status |
 |---|---|---|---|
 | C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met, but see §11** |
-| C2 | Graph structure is necessary | MPNN beats density-only MLP | **Not supported — 6.3% margin for 25× the parameters (§10.3)** |
+| C2 | Graph structure is necessary | MPNN beats density-only MLP | **Not supported — 3 seeds, sign flips on OOD (§10.3)** |
 | C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met on tolerance, but see §10.5** |
 | C4 | Speedup over simulator | inference vs 117.2 s/tissue | **Met, trivially** |
 
@@ -667,33 +667,53 @@ The 10%-of-range threshold on this dataset is approximately 8 mV. **The density-
 clears the Phase 1 accuracy criterion by a factor of eight, after two epochs, without ever
 seeing the graph.**
 
-### 10.3 MPNN vs baseline — both converged
+### 10.3 MPNN vs baseline — three seeds, both converged
 
-Seed 42, RTX 4050, identical training path, early stopping on validation MAE:
+Identical training path, early stopping on validation MAE, RTX 4050. Seeds 42 / 137 / 256:
 
-| | MLP | MPNN | MPNN advantage |
+| arch | seed | epochs | test_id MAE | test_ood MAE |
+|---|---|---|---|---|
+| MLP | 42 | 56 | 0.8119 | 1.2165 |
+| MLP | 137 | 77 | 0.7801 | 1.1290 |
+| MLP | 256 | 54 | 0.8001 | 1.2245 |
+| MPNN | 42 | 91 | 0.7615 | 1.1642 |
+| MPNN | 137 | 66 | 0.7802 | 1.2168 |
+| MPNN | 256 | 95 | 0.7591 | 1.1035 |
+
+Aggregated (mean ± sample sd over 3 seeds):
+
+| split | MLP (26,625 params) | MPNN (663,553 params) | difference |
 |---|---|---|---|
-| Parameters | 26,625 | 663,553 | 25× more |
-| Sees the graph | **no** | yes | |
-| Epochs to early stop | 56 | 91 | |
-| Training time | 143 s | 1,621 s | 11× longer |
-| `test_id` MAE | 0.812 mV | **0.761 mV** | **6.3%** |
-| `test_id` R² | 0.9803 | 0.9810 | |
-| `test_ood` MAE | 1.216 mV | **1.164 mV** | **4.3%** |
-| `test_ood` R² | 0.9683 | 0.9692 | |
+| `test_id` | 0.7974 ± 0.0161 | **0.7669 ± 0.0116** | **−0.0305 (−3.8%)** |
+| `test_ood` | 1.1900 ± 0.0529 | 1.1615 ± 0.0567 | −0.0285 (−2.4%) |
 
-**This is the headline result and it is close to a null.** A 664K-parameter graph network with
-full access to gap-junction topology and conductance beats a 27K-parameter model that sees only
-a cell's own channel densities by **6.3%** of MAE in-distribution and **4.3%** out-of-distribution,
-for 25× the parameters and 11× the training time.
+Paired per-seed differences (MPNN − MLP), which control for seed-specific data ordering:
 
-Both models clear the Phase 1 accuracy criterion (10% of range ≈ 8 mV) by roughly an order of
-magnitude. Claim C1 is met. **Claim C2 — that graph structure is necessary — is not supported by
-this experiment**, and §11 explains why the experiment as designed could not have supported it.
+| split | seed 42 | seed 137 | seed 256 | mean | sd of the differences |
+|---|---|---|---|---|---|
+| `test_id` | −0.0505 | **+0.0000** | −0.0410 | −0.0305 | 0.0264 |
+| `test_ood` | −0.0523 | **+0.0878** | −0.1209 | −0.0285 | 0.1069 |
 
-An earlier 2-epoch MLP run (MAE 0.970) made the MPNN's margin look like 21%. That comparison was
-not fair: the MLP had not converged. Reported here because the unfair version is the one that
-flatters the hypothesis, and it is the number that would have been easy to publish by accident.
+**This is the headline result and it is a null on the out-of-distribution split.**
+
+- **`test_id`:** the MPNN wins on two seeds and exactly ties on the third. It never loses. The
+  direction is consistent, and a 3.8% mean advantage is plausibly real — but the effect is
+  0.03 mV against a seed-to-seed spread of 0.016 mV, with *n* = 3. It is suggestive, not
+  established.
+- **`test_ood`:** **the sign flips across seeds** (−0.052, +0.088, −0.121). The mean difference
+  is −0.0285 against a paired sd of 0.107 — well inside one standard deviation of zero. There
+  is no detectable advantage to having the graph on out-of-distribution data.
+
+A 664K-parameter network with full access to gap-junction topology and conductance is
+statistically indistinguishable from a 27K-parameter model that has never seen a gap junction,
+on the split that was supposed to demonstrate the value of topology. Claim **C2 is not
+supported**, and §11 argues the experiment as designed could not have supported it.
+
+**Two cautions about how easy this was to get wrong.** The seed-42-only comparison gave 6.3% and
+4.3%, which reads as a modest but real win. The 2-epoch MLP run before that gave 21%, which
+reads as a decisive win. Both are in this report (§10.2 and the changelog) because the
+unconverged and single-seed versions are the ones that flatter the hypothesis, and both were
+numbers this project came close to reporting.
 
 ### 10.4 Error by node degree — a control that came out negative
 
@@ -897,7 +917,7 @@ of magnitude*, and the paper should give the measurement conditions rather than 
 | ~~**B**~~ | OOD by family **and** perturbed channel | done | **Done** (§10.5). Difficulty spans 6.5×; two thirds of `spatial_gradient` is easier than in-distribution data. |
 | **A2** | Test the mesh-geometry explanation for §10.4 — regress within-tissue Vmem deviation on cell area and neighbour count | free | Would establish the mechanism behind the interior/boundary asymmetry. |
 | **C** | **Regenerate training data with intra-tissue spatial structure** | ≈ 27 h at 12 workers | The decisive fix for §11. Makes the graph informative in-distribution and turns MPNN-vs-MLP into a real test. |
-| **D** | Multi-seed runs (42/137/256) for both architectures | ≈ 2 h | Error bars. Currently *n* = 1. |
+| ~~**D**~~ | Multi-seed runs (42/137/256) for both architectures | done | **Done** (§10.3). OOD difference sign-flips across seeds; in-distribution difference is 2 wins and a tie. |
 | **E** | Train with `physics_auxiliary_loss` enabled | ≈ 1 h | Only meaningful after C. |
 | **F** | Message-passing depth sweep (K = 1, 2, 4, 6, 10) | ≈ 5 h | Measures the electrical coupling length; tests whether K = 6 is sufficient or excessive. |
 | **G** | Experimental validation against published *Xenopus* Vmem measurements | unscoped | The only test of whether BETSE itself is right. |
