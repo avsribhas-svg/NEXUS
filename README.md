@@ -15,23 +15,37 @@ Full specification: [`nexus-phase1-prd.md`](nexus-phase1-prd.md).
 
 **92/92 tests passing**, including all five BETSE integration tests.
 
-```
-tests/test_data_pipeline.py ..............................  [ 32%]
-tests/test_evaluation.py    .............                   [ 46%]
-tests/test_integration.py   ........                        [ 55%]
-tests/test_model.py         ........................        [ 81%]
-tests/test_numerical.py     .......                         [ 89%]
-tests/test_training.py      ..........                      [100%]
-======================= 92 passed in 461.20s =======================
-```
+Milestones 1–5 complete. Milestone 6 (evaluation) in progress. Milestone 7 (experimental
+validation) not started.
 
-Dataset generation is in progress: 13,800 BETSE simulations for a 12,000-sample dataset
-(8000 train / 1000 val / 1000 test_id / 2000 test_ood).
+### Headline result
 
-**The model has not yet been trained on real BETSE data.** Every test to date runs against
-synthetic fixtures with a deterministic analytic target. Passing `test_gnn_beats_mlp_on_coupled_data`
-shows the architecture can exploit graph structure; it does not show it can learn real bioelectrics.
-That experiment begins when generation completes.
+Three seeds, both architectures, converged with early stopping on real BETSE data:
+
+| split | MLP (26,625 params, no graph) | MPNN (663,553 params) | difference |
+|---|---|---|---|
+| `test_id` | 0.7974 ± 0.0161 mV | 0.7669 ± 0.0116 mV | −3.8% |
+| `test_ood` | 1.1900 ± 0.0529 mV | 1.1615 ± 0.0567 mV | −2.4% |
+
+Both clear the accuracy criterion (10% of range ≈ 8 mV) by roughly an order of magnitude. But on
+the out-of-distribution split the paired per-seed difference **changes sign** (−0.052, +0.088,
+−0.121), so the graph network is not distinguishable from the graph-blind baseline where it
+matters most.
+
+The cause is in the data, not the model: **every cell in every training tissue carries an
+identical channel-density vector**, so ~99% of Vmem variance is between tissues rather than within
+them, and the gap-junction term vanishes in the bulk for any conductance. The hypothesis that
+topology is necessary is not refuted — it is untested, because this dataset cannot express it.
+
+Full analysis: [`logs/research-report.md`](logs/research-report.md).
+Departures from the spec: [`DEVIATIONS.md`](DEVIATIONS.md).
+Build narrative: [`logs/director-log.md`](logs/director-log.md).
+
+### Dataset
+
+12,000 BETSE simulations from 13,800 attempted, zero failures
+(8000 train / 1000 val / 1000 test_id / 2000 test_ood, the last being 500 each of four
+perturbation families). Details and caveats: [`data/synthetic/DATASET_CARD.md`](data/synthetic/DATASET_CARD.md).
 
 ## Layout
 

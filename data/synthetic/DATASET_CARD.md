@@ -236,3 +236,14 @@ to baseline.** Aggregate OOD error will therefore be dominated by the easy Cl an
 understate true difficulty. Per-type OOD error must be broken down by the perturbed channel, which
 can be recovered from each record's `channel_densities` by taking the column of maximum variance.
 Reporting a single test_ood MAE without that breakdown will mislead.
+
+## Correction: the 117.2 s per-simulation figure is throughput, not latency
+
+The generation campaign ran **12 simulations concurrently**, so the 117.2 s mean recorded above is
+a throughput-derived per-task cost, inflated by contention. Measured serially and unloaded, the
+same simulator takes **~42 s** for tissues of 40–232 cells.
+
+Use 117.2 s when reasoning about **how long a generation campaign takes at 12 workers**. Use the
+serial figure when reasoning about **how long one simulation takes**, which is the quantity any
+speedup comparison against a learned model requires. Reporting the former as the latter inflates
+the apparent speedup by roughly 2.5×.

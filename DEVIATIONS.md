@@ -160,7 +160,15 @@ What exists is a mean of **117.2 s/simulation over 13,800 runs**, measured under
 load during the generation campaign. That is a larger sample but a different quantity: parallel
 load inflates per-simulation latency, and no median/IQR or CPU-vs-GPU split was recorded.
 
-**Status:** to be redone to protocol in Milestone 6.
+**Measured correction (Milestone 6):** run serially and unloaded, the same simulator takes
+**~40–50 s** for tissues of 40–232 cells, not 117.2 s. **The published figure was inflated by
+roughly 2.5× because it measured throughput under 12-way parallel load and was reported as
+latency.** Every speedup claim made before this point used the inflated denominator, which
+*flattered* the model — the true speedup is smaller than previously stated.
+
+**Status:** being redone to protocol — 100 configurations, one at a time, median and IQR, CPU and
+GPU inference reported separately. Smoke test on 2 configurations gave CPU 11.7 ms (3,359×) and
+CUDA 4.8 ms (8,123×), with graph construction and host-to-device transfer inside the timed region.
 
 ### D16 [!] — Ablations partially redundant with findings already in hand
 *PRD §7.4 lists five ablations.* Two need reinterpretation:
@@ -209,3 +217,40 @@ order.
   behind D7.
 - **Within-graph vs across-graph target variance.** The single cheap measurement that exposed
   D8. Recommended as standard practice for any graph-learning benchmark.
+
+
+---
+
+## Added during Milestone 6
+
+### D21 [I] — `physics_loss_weight` added to `TrainingConfig`
+Not in the PRD, which treats the physics auxiliary loss as an architectural property rather than a
+configurable one. Appended last with default `0.0`, so behaviour is unchanged unless set. Applied
+to the **training** loss only; validation loss stays pure MAE so early stopping and checkpoint
+selection compare like with like across ablations. Required to run PRD §7.4's physics-loss
+ablation at all.
+
+### D22 [N] — Ablations are driven by CLI flags on `train.py`, not YAML configs
+*PRD §10 Milestone 5 envisages YAML-loadable configuration (see D12).*
+
+`scripts/train.py` gained `--n-layers`, `--train-size`, `--no-normalize`, `--physics-weight` and
+`--tag`; `scripts/run_ablations.py` is a thin driver that subprocesses it once per configuration.
+This keeps a single training code path across every ablation, which removes "the ablation was
+trained differently" as a confound. De-normalization is applied through PyG's `transform=` hook.
+
+### D23 [L] — Deliverable figure 7 cannot exist yet
+*PRD §7.5 lists seven figures.*
+
+Figure 7 is the experimental-validation plot and depends on Milestone 7 data, which does not exist.
+Figures 1, 2, 3 and 6 are rendered; 4 and 5 depend on the speed benchmark and ablation sweep now
+running. **Milestone 6's exit criterion ("all 7 deliverable figures are generated") therefore
+cannot be fully met until Milestone 7 supplies the data**, and will be reported as 6 of 7.
+
+### D24 [!] — The scaffold-degradation protocol was not followed this session
+*`claude-md-addendum.md` Property 5: three consecutive first-attempt passes earn a trial at partial
+scaffold.*
+
+Four consecutive first-attempt passes occurred in Milestone 6 and no partial-scaffold trial was
+run — every task stayed at full scaffold. Delivery pressure displaced the experiment. The
+consequence is that the capability-boundary claim in the report rests on a **single** observed
+partial-scaffold failure (`trainer.py`), which is stated there as a threat to validity.

@@ -46,7 +46,7 @@ Four sub-claims, each independently testable:
 | C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met, but see §11** |
 | C2 | Graph structure is necessary | MPNN beats density-only MLP | **Not supported — 3 seeds, sign flips on OOD (§10.3)** |
 | C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met on tolerance, but see §10.5** |
-| C4 | Speedup over simulator | inference vs 117.2 s/tissue | **Met, trivially** |
+| C4 | Speedup over simulator | inference vs measured BETSE latency | **Met** (§12) |
 
 C1 and C4 are met comfortably. **C2 is not supported**, and §11 argues that the experiment as
 designed could not have supported it: the training distribution contains no intra-tissue spatial
@@ -382,7 +382,8 @@ junction has closed carries a correspondingly smaller weight.
 |---|---|
 | Simulations attempted | 13,800 |
 | Failures | **0** |
-| Mean wall clock per simulation | 117.2 s |
+| Mean wall clock per simulation, **under 12-way parallel load** | 117.2 s |
+| Median wall clock per simulation, **serial and unloaded** | **~42 s** (§12) |
 | Parallelism | 12 joblib/loky workers |
 | Records finalized | 12,000 |
 | Surplus (unused) | 1,800 |
@@ -900,14 +901,42 @@ variance — that is not standard practice. We recommend it be made standard pra
 
 ## 12. Speed
 
-BETSE's measured cost is **117.2 s per tissue**, averaged over 13,800 runs under 12-way
-parallel load. Model inference is milliseconds for a whole batch on GPU. The speedup is real
-and large but should be reported with two caveats: the BETSE denominator was measured under
-parallel load (single-run latency is lower), and it includes ~4 s of process startup that a
-library-level integration would avoid. A conservative characterization is *four to five orders
-of magnitude*, and the paper should give the measurement conditions rather than a bare ratio.
+### 12.1 The originally reported number was throughput, not latency
 
----
+Every speedup claim made before Milestone 6 used a BETSE cost of **117.2 s per simulation**, a mean
+over 13,800 runs during the generation campaign. That campaign ran **12 simulations concurrently**.
+Under that load each individual simulation is slowed by contention, so 117.2 s is a
+throughput-derived per-task figure, not single-simulation latency. PRD §7.3 asks for latency.
+
+Measured serially and unloaded, the same simulator takes **~42 s** for tissues of 40–232 cells.
+**The published denominator was inflated by roughly 2.5×, and the error flattered the model.** The
+true speedup is smaller than previously stated in this report.
+
+This is the same class of error as the unconverged-baseline and single-seed comparisons in §10.3:
+a number that made the result look better, produced by measuring a convenient quantity rather than
+the specified one.
+
+### 12.2 Benchmark to protocol
+
+Re-run per PRD §7.3: **100 configurations, executed one at a time**, median and interquartile
+range, with CPU and GPU inference reported separately. The model-side timed region deliberately
+includes graph construction and the host-to-device transfer, so it measures what a user would
+actually wait for, not just the forward pass.
+
+Deliberately **not** run concurrently with the ablation sweep, even though one is CPU-bound and the
+other GPU-bound — concurrency is what corrupted the original figure.
+
+*Full 100-configuration run in progress at time of writing.* Smoke test on 2 configurations:
+
+| | median | q1 | q3 | speedup vs BETSE |
+|---|---|---|---|---|
+| BETSE (serial) | 42.0 s | 41.2 s | 47.5 s | 1× |
+| Model, CPU | 11.7 ms | — | 15.0 ms | **3,359×** |
+| Model, CUDA | 4.8 ms | — | 6.3 ms | **8,123×** |
+
+Claim C4 is met by a wide margin under any reasonable accounting. The honest characterization is
+**three to four orders of magnitude**, reported with the measurement conditions attached rather
+than as a bare ratio.
 
 ## 13. Planned experiments
 
@@ -1243,7 +1272,8 @@ never touched.
 - Report restructured into Part I (science) and Part II (methodology).
 
 **Earlier** — Dataset generation campaign.
-- 13,800 simulations, **zero failures**, 117.2 s each, 12 workers, ≈ 39 h.
+- 13,800 simulations, **zero failures**, 117.2 s each under 12-way load, ≈ 39 h. (Serial latency
+  later measured at ~42 s — see §12.1.)
 - 12,000 records finalized into 8000 / 1000 / 1000 / 2000 splits, verified disjoint.
 - Per-cell tissue-profile mechanism developed and verified in production
   (`corr(x, density) = 0.997`; baseline path bit-identical).
