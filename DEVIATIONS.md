@@ -1,0 +1,211 @@
+# Deviations from the PRD
+
+The PRD (`nexus-phase1-prd.md`) is the guide, not the contract. This file records every place
+the build diverged from it, why, and whether the deviation is a limitation, an improvement, or
+neutral. Entries are grouped by the PRD section they depart from.
+
+Legend: **[L]** limitation · **[N]** neutral / cosmetic · **[I]** improvement · **[!]** unresolved
+
+---
+
+## Physics and simulator mapping
+
+### D1 [L] — HKATP and VATP are held at zero
+*PRD §4.1.1 specifies an 8-channel vector.*
+
+BETSE exposes no equivalent for the H⁺/K⁺-ATPase or V-ATPase in the configuration surface we
+drive. Rather than reduce the vector to six dimensions, columns 6 and 7 are held at exactly
+0.0 (`ConfigSampler(zero_unmapped_channels=True)`, `UNMAPPED_CHANNEL_INDICES = (6, 7)`).
+
+**Why:** the test suite hardcodes `N_CHANNELS = 8` in five files; Phase 2's transcriptomic
+encoder is specified against an 8-dimensional interface; the cost is one conditional.
+
+**Consequence:** the effective input dimension is six. Two features carry no signal. Any
+parameter-efficiency or feature-importance claim must say so.
+
+### D2 [!] — The prediction target is not a steady state
+*PRD §4.1.4 specifies steady-state Vmem with a convergence criterion on `max|dVmem/dt|`.*
+
+That criterion is unsatisfiable over this parameter space. Two processes run on separated
+timescales: a fast electrical transient (complete in 4–6 simulated seconds) and a slow secular
+concentration drift driven by continuous Na⁺/K⁺-ATPase activity. There is no fixed point.
+
+**Resolution:** the target was renamed to **"Vmem after 5 s of equilibration."** This is a
+well-defined, reproducible operator on the configuration and it captures the physically
+meaningful fast process.
+
+**Consequence:** the `.npz` key is still `vmem_steady_state` for test-suite compatibility. That
+name is a compatibility artifact and must not be repeated as a claim in any writeup. Milestone
+1's manual-verification bullet ("convergence to steady state") is therefore **not satisfied as
+written**.
+
+### D3 [N] — `Nav` denotes background sodium permeability, not gated Nav channel density
+*PRD §4.1.1 names the feature `Nav`.*
+
+Measurement showed BETSE's `Nav1p3` channel object has no effect at rest, which is correct
+physics — a voltage-gated sodium channel is closed at −63 mV. The `Nav` feature is therefore
+mapped to the background permeability `Dm_Na`, which measurement showed is the dominant control
+on resting Vmem (57 mV swing across its range).
+
+**Consequence:** the feature name does not mean what it appears to mean.
+
+### D4 [N] — Potassium is driven through channel objects, not `Dm_K`
+An initial mapping routed `Kir` and `K_leak` through `Dm_K`. Measurement showed `Dm_K` is inert
+(1–3 mV across a sweep) because K⁺ permeability is dominated by the `Kir2p1` and `K_Leak`
+channel objects, whose `max Dm` values are 300× and 20× the background. The mapping was
+rewritten to drive `kir_max_dm` and `kleak_max_dm` directly.
+
+### D5 [L] — `gj_blockade` is a near-blockade, not a blockade
+*PRD §4.1.3 specifies gap-junction blockade.*
+
+`gj_conductance_to_surface_area` floors the surface area at `GJ_SURFACE_CLOSED = 1e-9` rather
+than true zero, so blocked junctions retain ~1% of open conductance.
+
+**Why:** chosen for physical plausibility. It incidentally prevented the failure mode the PRD
+predicted — a singular gap-junction Laplacian, which BETSE inverts densely. The anticipated
+5–15% failure rate was **0%** in 575/575 `gj_blockade` runs.
+
+### D6 [L] — Spatial perturbations use only 3 of the 6 mapped channels
+*PRD §4.1.3 does not restrict which channels may carry a spatial gradient.*
+
+Only `Nav`, `Ca` and `Cl` map to per-cell membrane diffusion constants and can be varied
+cell-by-cell. `Kir` and `K_leak` act through named channel objects whose `max Dm` is a
+per-*profile* property; `NaKATP` acts through `alpha_NaK`, a global internal parameter.
+`SPATIAL_CHANNEL_INDICES = (0, 3, 4)`.
+
+**Consequence:** this is a simulator interface limit, not a design choice, and it produces D7.
+
+### D7 [L] — Two thirds of spatial perturbations are not generalization tests
+Because Vmem is governed by `Dm_Na`, only `Nav` gradients move it appreciably:
+
+| channel | mean \|corr(density, Vmem)\| | mean within-tissue Vmem sd |
+|---|---|---|
+| Nav | 0.965 | 10.58 mV |
+| Cl | 0.533 | 0.48 mV |
+| Ca | 0.496 | 0.58 mV |
+
+Measured model error confirms it: `spatial_gradient` / Ca and / Cl are **easier** than
+in-distribution data (0.53–0.59 mV vs 0.76–0.81). Aggregate OOD numbers must be broken down by
+perturbed channel or they mislead.
+
+---
+
+## Dataset
+
+### D8 [!] — Baseline training tissues are spatially uniform
+*Not specified either way by the PRD. This is the most consequential deviation in the project.*
+
+`ConfigSampler` draws one density vector per configuration and tiles it across every cell
+(`np.tile(per_channel, (n_cells, 1))`). Perturbation configs introduce per-cell variation;
+baseline configs never do. Since train, val and test_id are entirely baseline, **per-cell
+density sd is exactly 0.000 in every training tissue.**
+
+**Consequence:** ~99% of Vmem variance is between tissues rather than within them (14.83 vs
+1.33 mV). For a spatially uniform tissue the junctional term `Σ_j g_ij (V_i − V_j)` vanishes in
+the bulk for *any* conductance, so the graph carries almost no in-distribution information. The
+Phase 1 hypothesis that topology is necessary **cannot be tested on this dataset.** Fixing it
+requires regenerating training data with intra-tissue spatial structure (~27 h).
+
+### D9 [L] — `exogenous_expression` confounds two kinds of extrapolation
+The perturbation sets 25% of cells to 4× the nominal channel maximum. The dataset normalizer
+divides by the fixed `CHANNEL_MAXES`, so those cells reach the network with input features of
+**4.0** when every training input lies in **[0, 1]**. The family therefore tests spatial
+structure *and* input-range extrapolation simultaneously and cannot attribute error to either.
+`spatial_gradient` (which stays in range) is the clean spatial measurement.
+
+### D10 [N] — Script named `generate_dataset.py`, not `generate_data.py`
+*PRD §10 Milestone 2.* Cosmetic.
+
+### D11 [N] — BETSE tests live in `tests/test_integration.py::TestBETSEIntegration`
+*PRD §10 Milestone 1 exit criterion names `tests/test_betse_generator.py`.*
+
+The delivered test suite places the five BETSE tests in `test_integration.py` under a
+`@pytest.mark.betse` marker. The suite is treated as immutable, so the criterion is satisfied by
+the tests that exist. All five pass.
+
+---
+
+## Training
+
+### D12 [N] — `TrainingConfig` is a plain dataclass, not pydantic, and not YAML-loadable
+*PRD §10 Milestone 5 specifies "pydantic dataclass for all hyperparameters, loadable from YAML."*
+
+Implemented as a standard `@dataclass`. Hyperparameters are passed via `scripts/train.py`
+command-line flags instead. The test suite constructs it positionally and by keyword; adding
+pydantic would not change behaviour.
+
+**Open:** if YAML-driven configuration is wanted for reproducibility of the ablation sweep, this
+should be revisited.
+
+### D13 [N] — No wandb/tensorboard logging
+*PRD §10 Milestone 5 mentions both.*
+
+Training history (`train_loss`, `val_loss`, `lr` per epoch) is written to
+`outputs/<run>/summary.json`. Sufficient for the learning-curve figure and for offline analysis;
+avoids a network dependency on the rig.
+
+### D14 [I] — `device` field added to `TrainingConfig`
+Not in the PRD. Appended last with default `"cpu"` so every existing call site and test is
+unaffected. Enables GPU training on the RTX 4050.
+
+---
+
+## Evaluation
+
+### D15 [!] — The speed benchmark denominator is not the PRD protocol
+*PRD §7.3 specifies BETSE run on 100 test configurations, reported as median and IQR, separately
+for CPU and GPU inference.*
+
+What exists is a mean of **117.2 s/simulation over 13,800 runs**, measured under 12-way parallel
+load during the generation campaign. That is a larger sample but a different quantity: parallel
+load inflates per-simulation latency, and no median/IQR or CPU-vs-GPU split was recorded.
+
+**Status:** to be redone to protocol in Milestone 6.
+
+### D16 [!] — Ablations partially redundant with findings already in hand
+*PRD §7.4 lists five ablations.* Two need reinterpretation:
+
+- **"Without physics auxiliary loss"** — the auxiliary loss has never been *enabled*, so the
+  ablation runs in reverse (baseline is "without"). It is also near-meaningless under D8: on
+  spatially uniform tissues the junctional residual is ~0 everywhere by construction, so the
+  term contributes almost no gradient. Meaningful only after D8 is fixed.
+- **"MLP baseline (no graph)"** — already run. Result is a near-null (see D17).
+
+### D17 [!] — The headline hypothesis is unsupported, and it is a dataset problem
+*PRD §2 Generalization criterion and the suite's `test_gnn_beats_mlp_on_coupled_data`.*
+
+Converged, seed 42: MPNN `test_id` MAE 0.761 vs MLP 0.812 — a 6.3% margin for 25× the
+parameters. Seed 137: **0.780 vs 0.780, a dead tie**, and the MPNN is 7.8% *worse* on
+`test_ood` (1.217 vs 1.129). Seed variance swamps the margin.
+
+Note that the suite's own coupling test passes — but it builds its fixture with per-cell channel
+draws and a target defined as an explicit mixture of a cell's own value and its neighbours'
+average. **The test fixture has the spatial heterogeneity the real dataset lacks (D8).** The
+hypothesis is not refuted; it is untested, because the data cannot express it.
+
+### D18 [N] — Success criterion 1 is measured against BETSE, not experiment
+*PRD §2 defines accuracy against "experimental measurements from published voltage reporter dye
+data."*
+
+All accuracy numbers to date are against BETSE. The experimental comparison is Milestone 7 and
+has not been started. Until then, "MAE ≤ 10% of range" is a statement about agreement with the
+simulator, not with biology.
+
+---
+
+## Process
+
+### D19 [N] — Milestone 1 was not skipped
+`CLAUDE.md` advised deferring BETSE integration as an installation risk and starting at
+Milestone 3. BETSE 1.5.0 installed cleanly, so Milestones 1 and 2 were completed first, in PRD
+order.
+
+### D20 [I] — Analyses added beyond the PRD
+- **Degree-stratified error, paired within graph** (`scripts/evaluate.py`). Intended as a test
+  of whether the MPNN learned gap-junction coupling. Came out negative: the graph-blind MLP
+  shows the same boundary/interior asymmetry at the same magnitude, so it is a property of the
+  data.
+- **OOD cross-tabulation by family × perturbed channel.** Revealed the 6.5× difficulty spread
+  behind D7.
+- **Within-graph vs across-graph target variance.** The single cheap measurement that exposed
+  D8. Recommended as standard practice for any graph-learning benchmark.
