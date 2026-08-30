@@ -9,3 +9,4 @@ class TrainingConfig:
     grad_clip_norm: float = 1.0
     weight_decay: float = 1e-4
     min_lr: float = 1e-5
+    device: str = "cpu"

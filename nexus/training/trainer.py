@@ -5,14 +5,16 @@ from nexus.model.losses import mae_loss
 
 class Trainer:
     def __init__(self, model, config):
-        self.model = model
+        self.device = torch.device(getattr(config, "device", "cpu"))
+        self.model = model.to(self.device)
         self.config = config
         self.history = {"train_loss": [], "val_loss": [], "lr": []}
         self.optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
-        params = inspect.signature(model.forward).parameters
+        params = inspect.signature(self.model.forward).parameters
         self.needs_graph = len(params) >= 3
 
     def _predict(self, batch):
+        batch = batch.to(self.device)
         if self.needs_graph:
             return self.model(batch.x, batch.edge_index, batch.edge_attr)
         else:
@@ -33,7 +35,7 @@ class Trainer:
             for batch in train_loader:
                 self.optimizer.zero_grad()
                 pred = self._predict(batch)
-                loss = mae_loss(pred, batch.y)
+                loss = mae_loss(pred, batch.y.to(self.device))
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip_norm)
                 self.optimizer.step()
@@ -47,7 +49,7 @@ class Trainer:
             with torch.no_grad():
                 for batch in val_loader:
                     pred = self._predict(batch)
-                    loss = mae_loss(pred, batch.y)
+                    loss = mae_loss(pred, batch.y.to(self.device))
                     val_total += loss.item()
                     n_val += 1
             val_loss = val_total / max(1, n_val)
