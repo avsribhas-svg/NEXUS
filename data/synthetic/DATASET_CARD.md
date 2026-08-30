@@ -187,3 +187,52 @@ move it under 1 mV.
 All four perturbation types are now genuine generalization tests. Effect sizes differ sharply by
 channel, so per-type OOD error should not be compared without noting which channel each
 configuration perturbed; a Cl gradient is a far smaller departure from baseline than a Nav one.
+
+---
+
+# Final composition and OOD heterogeneity
+
+Generation completed. **13,800 simulations attempted, 13,800 succeeded, zero failures.**
+12,000 assigned to splits; 1,800 surplus retained in `_staged/` and unused.
+
+| split | count | source |
+|---|---|---|
+| train | 8000 | baseline |
+| val | 1000 | baseline |
+| test_id | 1000 | baseline |
+| test_ood | 2000 | 500 each of channel_blockade, gj_blockade, exogenous_expression, spatial_gradient |
+
+Verified: no `config_id` appears in two splits; train is entirely baseline; test_ood is entirely
+perturbation; every sampled file carries the eight required keys with Vmem inside [-120, 60] mV.
+Cell counts span 40 to 490, median 150. Total 0.11 GB across 12,000 files.
+
+The anticipated failure rate of 5-15% (PRD §11.4) did not materialise at all. In particular
+`gj_blockade`, expected to be the numerical hazard because zero gap-junction conductance should make
+the gap-junction Laplacian singular and BETSE precomputes a dense inverse of it, produced 575/575
+successes. The reason is that `gj_conductance_to_surface_area` floors the surface area at
+`GJ_SURFACE_CLOSED = 1e-9` rather than true zero, so cells become nearly isolated but the matrix
+stays invertible. That floor was chosen for physical plausibility and incidentally protected the
+numerics.
+
+## OOD difficulty is highly heterogeneous — read this before reporting OOD metrics
+
+Measured across sampled `spatial_gradient` records, grouped by which channel the perturbation
+targeted:
+
+| channel | mean \|corr(x, density)\| | mean \|corr(density, Vmem)\| | mean Vmem sd |
+|---|---|---|---|
+| **Nav** | 0.996 | **0.965** | **10.58 mV** |
+| Cl | 0.996 | 0.533 | 0.48 mV |
+| Ca | 0.997 | 0.496 | 0.58 mV |
+
+The gradients themselves are clean in every case — `corr(x, density) ≈ 0.997`, spanning the full
+channel range (Nav 0→49.8, Cl 0→15.0, Ca 0→9.98). **The disparity is physics, not a generation
+defect.** Vmem is governed by `Dm_Na`, so only Nav perturbations move it appreciably. A Cl or Ca
+gradient shifts Vmem by roughly 0.5 mV, under 3% of the 10% -of-range accuracy target and within
+noise of an unperturbed tissue.
+
+**Roughly one third of spatial perturbations are a genuine generalization test; the rest sit close
+to baseline.** Aggregate OOD error will therefore be dominated by the easy Cl and Ca cases and will
+understate true difficulty. Per-type OOD error must be broken down by the perturbed channel, which
+can be recovered from each record's `channel_densities` by taking the column of maximum variance.
+Reporting a single test_ood MAE without that breakdown will mislead.

@@ -822,3 +822,76 @@ Full suite in the dev tree: **92 passed in 357s**. Only then was it deployed and
 Tests passing: 92/92 (dev tree, deployed to production).
 Generation resumed: 10,551 done, 3,249 remaining.
 Current tier: 3 | Scaffold: full
+
+---
+
+## [Session 3] Milestone 2 COMPLETE
+
+    Summary: Total completed: 3249, Successes: 3249, Failures: 0
+    RUN_COMPLETE
+
+Across the whole milestone: **13,800 simulations attempted, 13,800 succeeded, zero failures.**
+The PRD anticipated a 5-15% failure rate (§11.4) and oversampled 15% to compensate. None of that
+margin was needed; 1,800 surplus records sit unused in `_staged/`.
+
+### Final composition, verified
+
+    train    8000    baseline
+    val      1000    baseline
+    test_id  1000    baseline
+    test_ood 2000    500 each of the four perturbation types
+
+    manifest rows 12000, duplicate config_ids across splits: 0
+    train all baseline: True, test_ood all perturbation: True
+    n_cells 40 / 150 / 490 (min / median / max)
+    every sampled file carries all eight required keys, Vmem within [-120, 60] mV
+    0.11 GB across 12000 files
+
+### The perturbation phase, and two predictions that were wrong
+
+**`gj_blockade` was the feared case and it never failed: 575/575.** The reasoning behind the worry
+was sound — zero gap-junction conductance should make the gap-junction Laplacian singular, and BETSE
+precomputes a dense inverse of it. The prediction was wrong because
+`gj_conductance_to_surface_area` floors the surface area at `GJ_SURFACE_CLOSED = 1e-9` rather than
+true zero. Cells become nearly isolated but the matrix stays invertible. That floor was chosen for
+physical plausibility and incidentally protected the numerics.
+
+**The per-cell tissue profile path, written this session and never run in production, worked
+first time.** Verified on real output rather than by absence of crashes: 8 of 8 sampled
+`exogenous_expression` records showed `corr(x, density) ≈ -0.75` with the target responding,
+`corr(density, Vmem)` from -0.19 to -0.91. Sampled `spatial_gradient` records showed
+`corr(x, density) = 0.997` spanning the full channel range.
+
+### The finding that matters for evaluation
+
+Grouping sampled gradients by perturbed channel:
+
+    Nav   mean |corr(density,Vmem)| 0.965   mean Vmem sd 10.58 mV
+    Cl    mean |corr(density,Vmem)| 0.533   mean Vmem sd  0.48 mV
+    Ca    mean |corr(density,Vmem)| 0.496   mean Vmem sd  0.58 mV
+
+The gradients are equally clean in all three cases, so this is physics rather than a generation
+defect: Vmem is governed by `Dm_Na`, so only Nav perturbations move it appreciably. About a third of
+spatial perturbations are a genuine generalization test and the rest sit within noise of an
+unperturbed tissue. **Aggregate test_ood error will be dominated by the easy Cl and Ca cases and
+will understate difficulty.** Recorded in the dataset card with the instruction that per-type OOD
+error must be broken down by perturbed channel.
+
+### Cost
+
+Roughly 30 hours wall clock across two sessions at 12 workers, ~117 s per simulation, on a laptop.
+Two interruptions, both recoverable and both recovered without losing a record: a deliberate pause
+to apply the OOD fix, and Windows ephemeral port exhaustion caused by the run's own loky worker IPC.
+
+### Coherence State
+Tests passing: 92/92. Milestone 2 complete: 12,000-sample dataset with full splits and manifest.
+Current tier: 3 | Scaffold: full
+Regressions across the entire project: none.
+
+### What remains
+
+Milestones 6 and 7 are untouched: the speed benchmark (PRD §7.3), the ablations (§7.4), and
+validation against published experimental Vmem (§4.2, §7). **And the central one: the model has
+never been trained on real BETSE data.** Every test to date runs against synthetic fixtures with a
+deterministic analytic target. The dataset that makes the actual experiment possible now exists;
+the experiment has not been run.
