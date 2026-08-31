@@ -44,7 +44,7 @@ Four sub-claims, each independently testable:
 | # | Claim | Metric | Status |
 |---|---|---|---|
 | C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met, but see §11** |
-| C2 | Graph structure is necessary | MPNN beats density-only MLP | **Not supported — 3 seeds, sign flips on OOD (§10.3)** |
+| C2 | Graph structure is necessary | MPNN beats density-only MLP | **Weakly supported in-distribution (0.03 mV, 2.5× noise); not supported OOD (§10.7)** |
 | C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met on tolerance, but see §10.5** |
 | C4 | Speedup over simulator | inference vs measured BETSE latency | **Met** (§12) |
 
@@ -822,9 +822,10 @@ All at seed 42, identical training path, early stopping on validation MAE. Rende
 | `abl_no_normalize` | mpnn | 6 | 8000 | **no** | 663,553 | 0.7660 | 1.1055 | 80 |
 | `abl_physics_loss` | mpnn | 6 | 8000 | yes | 663,553 | 0.7827 | 1.1259 | 64 |
 
-**Read this table against the noise floor in §10.7, which is ±0.031 mV on `test_id` and ±0.054 mV
-on `test_ood` for a *fixed* configuration and seed.** Most of the differences below are smaller
-than that.
+**Read this table against the noise floor in §10.7: a per-run standard deviation of 0.0128 mV on
+`test_id` and 0.0321 mV on `test_ood` for a *fixed* configuration and seed (n = 6).** Differences
+below roughly two of those — 0.026 and 0.064 mV — are uninterpretable at n = 1 per cell, which
+covers most of this table.
 
 **Training-set size is the only ablation with a clearly resolvable effect.** 0.8862 → 0.8169 →
 0.7875 → 0.7666 across 1K → 8K is monotonic and spans 0.12 mV, roughly 4× the noise floor.
@@ -848,58 +849,103 @@ everywhere by construction, so the term supplies almost no gradient. This ablati
 the regularizer; it is another consequence of §11. It should be re-run after the training
 distribution is fixed.
 
-### 10.7 Reproducibility: the MPNN's noise floor exceeds the effect being measured
+### 10.7 Reproducibility: the MPNN is nondeterministic, the MLP is not
 
-Three runs in this project share an identical configuration — MPNN, K = 6, 8000 training graphs,
-seed 42, normalized, no physics loss — because the ablation grid re-ran the base configuration
-under two different tags. They were not intended as replicates. They are the most informative
-result in the milestone.
+The ablation grid accidentally re-ran the base configuration under two extra tags, which revealed
+that runs sharing an identical configuration *and seed* do not agree. That was worth measuring
+properly, so six replicates of MPNN / K = 6 / 8000 graphs / seed 42 now exist, plus a controlled
+mechanism experiment.
+
+#### The noise floor
 
 | run | test_id MAE | test_ood MAE | epochs |
 |---|---|---|---|
 | `mpnn_seed42` | 0.7615 | 1.1642 | 91 |
 | `abl_size_8000` | 0.7666 | 1.1413 | 81 |
 | `abl_depth_k6` | 0.7923 | 1.1951 | 59 |
-| **spread** | **0.0308** | **0.0538** | **32** |
+| `det_rep_1` | 0.7871 | 1.2285 | 48 |
+| `det_rep_2` | 0.7840 | 1.1515 | 69 |
+| `det_rep_3` | 0.7887 | 1.1649 | 59 |
+| **mean ± sd (n = 6)** | **0.7800 ± 0.0128** | **1.1743 ± 0.0321** | 48–91 |
 
-Compare against the effect the project set out to measure:
+Epoch counts range from 48 to 91 for byte-identical inputs, so early stopping fires at genuinely
+different points along genuinely different optimization trajectories.
 
-| quantity | magnitude |
-|---|---|
-| MPNN − MLP, `test_id`, mean of 3 seeds (§10.3) | **0.0305 mV** |
-| MPNN − MLP, `test_ood`, mean of 3 seeds (§10.3) | **0.0285 mV** |
-| MPNN run-to-run spread at **fixed seed and configuration** | **0.0308 / 0.0538 mV** |
+#### The MLP reproduces bit-for-bit
 
-**The run-to-run variance of the MPNN at a fixed seed is as large as the entire measured advantage
-of the MPNN over the MLP.** The 3.8% in-distribution margin is not merely statistically weak across
-seeds — it is below the reproducibility threshold of a single configuration.
+`mlp_seed42` and `abl_mlp_baseline` are the same configuration run at different times and returned
+identical values to every printed digit — 0.811936 / 1.216481, both stopping at epoch 56.
 
-The MLP, by contrast, **reproduces exactly.** `mlp_seed42` and `abl_mlp_baseline` are the same
-configuration and returned bit-identical results: 0.8119 / 1.2165, both stopping at epoch 56.
+#### Mechanism: it is the scatter aggregation, on CPU as well as GPU
 
-That asymmetry identifies the mechanism. The MPNN aggregates messages with `index_add_`, which on
-CUDA is implemented with atomic floating-point additions applied in nondeterministic order. Floating
--point addition is not associative, so the aggregation result differs run to run at the last bits,
-and 6 layers × 81 epochs of training amplifies that into different optimization trajectories —
-visible in the epoch counts, which range from 59 to 91 for identical inputs. `BaselineMLP` contains
-only dense linear layers, which are deterministic on CUDA, so it reproduces exactly.
+A controlled experiment — 500 training graphs, 10 epochs, patience disabled, two runs per
+condition:
 
-**Consequences for everything else in this report:**
+| condition | run 1 test_id | run 2 test_id | reproducible? |
+|---|---|---|---|
+| MPNN on **CUDA** | 1.106219 | 1.167929 | **no** |
+| MPNN on **CPU** | 1.117110 | 1.056789 | **no** |
+| MLP on CUDA | 1.204118 | 1.204118 | **yes, bit-identical** |
 
-1. The §10.3 seed study measured seed variance *plus* CUDA nondeterminism, not seed variance alone.
-   Its reported standard deviations are inflated by an unknown amount, and its paired per-seed
-   differences cannot be attributed to the seed.
-2. The §10.4 degree analysis and §10.5 OOD cross-tabulation are single-run and therefore carry an
-   unquantified ±0.03 mV per cell of run noise. The large effects there (the 3× boundary/interior
-   ratio, the 6.5× OOD difficulty spread) are far above it and survive. The small ones — including
-   the "MPNN's advantage is 2× larger at boundary cells" residual signal — do not.
-3. Every ablation difference below ~0.06 mV in §10.6 is uninterpretable.
+The MLP result rules out the obvious confounders: the dataloader shuffle, weight initialization and
+the seeding of both `torch` and `numpy` are all shared with the MPNN and all reproduce exactly.
+**The nondeterminism is specific to the MPNN, and it is present on CPU as well as CUDA.**
 
-**Recommended remediation**, in order of cost: report all model results as a median over ≥3
-replicates at fixed seed; set `torch.use_deterministic_algorithms(True)` with
-`CUBLAS_WORKSPACE_CONFIG=:4096:8` and accept the throughput loss on scatter operations; or replace
-`index_add_` with a deterministic segment-sum over a sorted edge list. **None of this was in the
-PRD, and its absence is why a null result initially looked like a 6.3% win.**
+That rules out the first hypothesis, which was CUDA atomics alone. `MPNN.forward` aggregates
+messages with `index_add`, whose reduction order is not fixed under parallel execution on *either*
+backend — CUDA uses atomic floating-point adds, and PyTorch's CPU implementation parallelizes the
+scatter under OpenMP. Floating-point addition is not associative, so the aggregation differs in the
+last bits, and six message-passing layers across tens of epochs amplify that into divergent
+training runs. `BaselineMLP` contains only dense linear layers, which are deterministic on both
+backends.
+
+#### What this means for the central comparison
+
+**Correcting an earlier statement in this report:** an initial reading compared the *range* of three
+accidental replicates (0.0308) against the mean MPNN−MLP difference (0.0305) and concluded the
+effect was entirely inside the noise. That compared a range to a mean difference, which overstates
+the noise. With n = 6 the per-run standard deviation is 0.0128 mV, and the two splits now separate:
+
+| split | MPNN mean ± sd (n=6, seed 42) | MLP (deterministic) | difference | vs per-run sd |
+|---|---|---|---|---|
+| `test_id` | 0.7800 ± 0.0128 | 0.8119 | **0.0319** | **2.5×** (6.1× the SE of the mean) |
+| `test_ood` | 1.1743 ± 0.0321 | 1.2165 | 0.0422 | 1.3× |
+
+- **In distribution, the MPNN's advantage at seed 42 is real.** 0.0319 mV is 2.5× the per-run
+  standard deviation and 6.1× the standard error of a 6-run mean. It is small — 3.9% — but it is
+  not noise. It is, however, **invisible in any single run pair**, which is exactly what happened
+  at seed 137 (§10.3), where one MPNN run and one MLP run tied at 0.780.
+- **Out of distribution it is not established.** The effect (0.0422) is only 1.3× a per-run sd of
+  0.0321, and the paired per-seed differences change sign (§10.3). OOD noise is 2.5× larger than
+  in-distribution noise, which makes sense: the OOD split contains the extreme
+  `exogenous_expression` inputs where small trajectory differences are most amplified.
+
+So claim **C2 remains unsupported out of distribution**, and in distribution it is supported only
+weakly, at an effect size of 0.03 mV — against a 10%-of-range accuracy target of ~8 mV. §11 remains
+the explanation for why the margin is so small.
+
+#### Consequences for the rest of this report
+
+1. §10.3's seed study measured seed variance **plus** run nondeterminism. Its per-seed differences
+   cannot be attributed to the seed, and each MPNN entry there is a single draw from a distribution
+   with sd 0.0128 (test_id) / 0.0321 (test_ood).
+2. §10.4 and §10.5 are single-run. Their large effects — the 3× boundary/interior ratio, the 6.5×
+   OOD difficulty spread — are far above the noise and survive. The small ones, including the
+   "MPNN's advantage is 2× larger at boundary cells" residual, do not.
+3. In §10.6, any ablation difference below roughly 0.026 mV (test_id) or 0.064 mV (test_ood) —
+   two per-run standard deviations — is uninterpretable. That covers normalization and the physics
+   loss, and most of the depth sweep.
+
+#### Remediation
+
+In increasing order of cost: **report every model result as a mean over ≥ 3 replicates** (this is
+now the project's standard); set `torch.use_deterministic_algorithms(True)` with
+`CUBLAS_WORKSPACE_CONFIG=:4096:8`, accepting reduced throughput on scatter ops; or replace
+`index_add` with a deterministic segment-sum over a sorted edge list.
+
+None of this was in the PRD. Its absence is why a 0.03 mV effect was first reported as a 21% win,
+then 6.3%, then a null — **four successive corrections, every one in the direction that made the
+result less impressive.** The pattern, not any individual number, is the methodological finding.
 
 ## 11. Analysis: the training distribution has no spatial structure
 

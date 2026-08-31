@@ -254,3 +254,30 @@ Four consecutive first-attempt passes occurred in Milestone 6 and no partial-sca
 run — every task stayed at full scaffold. Delivery pressure displaced the experiment. The
 consequence is that the capability-boundary claim in the report rests on a **single** observed
 partial-scaffold failure (`trainer.py`), which is stated there as a threat to validity.
+
+### D25 [!] — MPNN training is not reproducible; the PRD assumes it is
+*PRD §10 Milestone 5 specifies "3 random seeds" as the source of run-to-run variation.*
+
+Six replicates of an identical configuration at seed 42 give `test_id` MAE 0.7800 ± 0.0128 and
+`test_ood` 1.1743 ± 0.0321, with early stopping firing anywhere between epoch 48 and 91. The
+`BaselineMLP` under identical treatment reproduces **bit-for-bit** (0.811936 / 1.216481, epoch 56,
+every time).
+
+A controlled experiment (500 graphs, 10 epochs, two runs per condition) isolates the cause: the
+MPNN is nondeterministic on **CPU as well as CUDA**, while the MLP is deterministic on both. The
+shared dataloader shuffle, initialization and seeding therefore cannot be responsible. The cause is
+`index_add` in `MPNN.forward`, whose reduction order is unfixed under parallel execution on either
+backend, combined with the non-associativity of floating-point addition.
+
+**Consequence:** seeds are not the dominant source of variation, so a 3-seed protocol with one run
+per seed does not characterize the uncertainty. The project standard is now **≥ 3 replicates per
+reported configuration**, and every result predating this measurement is a single draw from a
+distribution of the widths above.
+
+**Remediation options** (none currently applied): report replicate means; enable
+`torch.use_deterministic_algorithms(True)` with `CUBLAS_WORKSPACE_CONFIG=:4096:8`; or replace
+`index_add` with a deterministic segment-sum over a sorted edge list.
+
+### D26 [N] — Milestone 6 closes at 6 of 7 figures
+See D23. Figures 1–6 are rendered from real data. Figure 7 is experimental validation and is
+blocked on Milestone 7, not on Milestone 6.

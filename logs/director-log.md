@@ -1108,3 +1108,52 @@ partial scaffold. Four consecutive first-attempt passes occurred this session
 partial-scaffold trial.** Delivery pressure displaced the experiment. The scaffold-degradation
 dataset is therefore still *n* = 1, which is stated as a threat to validity in the report and
 should be corrected in a later session.
+
+### Task: determinism study (unplanned, and the milestone's main finding)
+
+The ablation grid re-ran the base configuration under two extra tags. Comparing them against
+`mpnn_seed42` showed three runs of an identical config and seed disagreeing by 0.031 mV — about the
+size of the whole MPNN-vs-MLP effect. That was worth measuring rather than noting, so I ran six
+replicates plus a controlled mechanism experiment.
+
+**Noise floor**, MPNN / K=6 / 8000 graphs / seed 42, n=6:
+`test_id` 0.7800 ± 0.0128, `test_ood` 1.1743 ± 0.0321, early stopping between epoch 48 and 91.
+
+**MLP under identical treatment: bit-identical.** 0.811936 / 1.216481, epoch 56, twice.
+
+**Mechanism**, 500 graphs / 10 epochs / two runs per condition:
+
+| condition | run 1 | run 2 | reproducible |
+|---|---|---|---|
+| MPNN CUDA | 1.106219 | 1.167929 | no |
+| MPNN CPU | 1.117110 | 1.056789 | **no** |
+| MLP CUDA | 1.204118 | 1.204118 | yes |
+
+My first hypothesis was CUDA atomics. **The CPU row falsifies it** — the MPNN is nondeterministic
+on both backends. The MLP result rules out the shared confounders (dataloader shuffle, init,
+seeding). Cause is `index_add` in `MPNN.forward`: reduction order is unfixed under parallel
+execution on either backend, and floating-point addition is not associative.
+
+**Correction I had to make to my own writeup.** My first pass compared the *range* of three
+replicates (0.0308) against the mean MPNN−MLP difference (0.0305) and concluded the effect was
+entirely inside the noise. That compares a range to a mean difference and overstates the noise. With
+n=6 the per-run sd is 0.0128, and the two splits separate:
+
+- `test_id`: effect 0.0319 = **2.5× the per-run sd**, 6.1× the SE of a 6-run mean. Small but real.
+- `test_ood`: effect 0.0422 = **1.3× the per-run sd**, and the sign flips across seeds. Not established.
+
+So C2 is weakly supported in distribution and unsupported out of it — not the flat null I stated
+first. I had corrected an overstatement in one direction by overstating in the other.
+
+**Running tally of how this number has moved:** 21% (unconverged baseline) → 6.3% (single seed) →
+3.8% (three seeds) → "below the noise floor" (wrong, range-vs-mean) → **3.9%, 2.5× the per-run sd,
+in-distribution only.** Five readings, four corrections, and every correction until the last one
+moved in the same direction. The pattern is the methodological finding, not any single number.
+
+### Coherence State
+Tests passing: 92/92. Milestone 5 complete. Milestone 6 complete at 6 of 7 figures (figure 7 is
+blocked on Milestone 7 data, logged as D23/D26).
+Current tier: 3 | Scaffold: full
+Regressions across the entire project: none.
+New project standard: **≥3 replicates per reported configuration**, since seeds are not the dominant
+source of variance (D25).
