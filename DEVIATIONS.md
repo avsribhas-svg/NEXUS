@@ -281,3 +281,43 @@ distribution of the widths above.
 ### D26 [N] — Milestone 6 closes at 6 of 7 figures
 See D23. Figures 1–6 are rendered from real data. Figure 7 is experimental validation and is
 blocked on Milestone 7, not on Milestone 6.
+
+---
+
+## Added during Milestone 7
+
+### D27 [!] — The parameterization is disconnected from its own validation literature
+*PRD §4.2 names four primary experimental sources.*
+
+Three of the four perturb a molecular target this parameterization cannot represent:
+Beane et al. 2011 (H⁺/K⁺-ATPase), Pai et al. 2018 nicotine (nicotinic ACh receptor), Pai et al.
+2018 HCN2 (HCN2 channel), Adams & Levin 2012 (V-ATPase). Two of those are the channels held at
+exactly zero under **D1**.
+
+D1 was taken as a cheap accounting convenience — keep an 8-dimensional interface, hold two columns
+at zero, cost one conditional. Its real cost is that **the model cannot be validated against most of
+the experiments the PRD nominated for validating it.** Anyone repeating this work should choose the
+channel parameterization from the validation experiments backwards, not from the simulator's
+configuration surface forwards.
+
+### D28 [!] — Vmem could not be digitized from published figures
+*PRD §4.2 specifies WebPlotDigitizer or equivalent for extraction from colormap images.*
+
+Reading pixel values out of figure images was not available. Every curated value is a number stated
+in text or in a table. Much of the *Xenopus* bioelectric literature publishes voltage as a heatmap
+rather than tabulated numbers, so this is the main reason the validation set is six perturbation
+pairs rather than dozens.
+
+### D29 [N] — Two curated records carry an unconstrained mapping parameter
+The carbenoxolone records use gap-junction scale factors of ×0.5 (100 µM) and ×0.2 (200 µM). The
+fraction of junctional conductance remaining at those doses is not reported in the source. The
+factors are placeholders chosen only to preserve dose ordering. **Only the sign and the ordering of
+those two records are testable; their magnitudes are not.** The complete-uncoupling record
+(`isolated_vs_monolayer_hipsc_cm`) has no free parameter and is the clean gap-junction test.
+
+### D30 [I] — One record was curated deliberately as a predicted failure
+`barium_locust_malpighian` uses the same reagent and nominal target as `barium_frog_kidney` but has
+the opposite measured sign, because insect Malpighian tubules are driven by an apical V-ATPase held
+at zero under D1. It was included, with the failure documented in its `mapping_assumption` field
+**before** the model was run, as a falsification check on the mapping protocol itself. The model
+failed it as predicted (error 34.65 mV, wrong sign).

@@ -15,8 +15,7 @@ Full specification: [`nexus-phase1-prd.md`](nexus-phase1-prd.md).
 
 **92/92 tests passing**, including all five BETSE integration tests.
 
-Milestones 1–5 complete. Milestone 6 (evaluation) in progress. Milestone 7 (experimental
-validation) not started.
+**All seven milestones complete.** All seven deliverable figures render.
 
 ### Headline result
 
@@ -36,6 +35,23 @@ The cause is in the data, not the model: **every cell in every training tissue c
 identical channel-density vector**, so ~99% of Vmem variance is between tissues rather than within
 them, and the gap-junction term vanishes in the bulk for any conductance. The hypothesis that
 topology is necessary is not refuted — it is untested, because this dataset cannot express it.
+
+### Validation against real measurements
+
+Curated 29 verified published Vmem measurements (0 fabricated) and tested the model differentially:
+match a baseline ensemble to a measured control potential, apply the perturbation, compare predicted
+against measured shift.
+
+| stratum | n | MAE | vs 5.78 mV threshold |
+|---|---|---|---|
+| Channel blockade on a representable channel | 2 | 5.35 mV | meets |
+| **Gap-junction blockade** | 3 | 9.80 mV | **fails** |
+| All records | 6 | 12.46 mV | fails |
+
+**All three gap-junction experiments predict ≈ 0.** Complete uncoupling, measured at +18.8 mV, is
+predicted at +0.017 mV — the model learned that gap junctions do not matter, because in its
+training data they did not. This failure was predicted in advance from the dataset diagnostic
+above, then confirmed against measurements the model never saw.
 
 Full analysis: [`logs/research-report.md`](logs/research-report.md).
 Departures from the spec: [`DEVIATIONS.md`](DEVIATIONS.md).

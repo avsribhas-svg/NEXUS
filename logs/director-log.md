@@ -1157,3 +1157,86 @@ Current tier: 3 | Scaffold: full
 Regressions across the entire project: none.
 New project standard: **≥3 replicates per reported configuration**, since seeds are not the dominant
 source of variance (D25).
+
+---
+
+## [Session 4] Milestone 7: experimental validation
+
+### Task: literature curation
+
+Ran five parallel literature searches with an independent adversarial verifier per extracted data
+point, each verifier instructed to check that the paper exists, that it reports the value for that
+condition, and that the value is a calibrated millivolt measurement rather than uncalibrated dye
+intensity. **30 candidates extracted, 29 confirmed, 1 unverifiable, 0 fabricated.**
+
+The zero-fabrication result is worth recording: the verification pass was built expecting
+plausible-looking non-existent citations, which is the characteristic failure of literature search.
+It did not occur. What the verifiers did catch was a subtler class — values quoted from a paper's
+*model output* rather than its measurements. Pai et al. 2018 reports simulated and measured
+voltages in adjacent sentences, so `source_is_model` became a mandatory schema field.
+
+### Decision: differential validation, not absolute
+
+Predicting absolute Vmem from a prose tissue description requires inventing a channel-density
+vector, and the invented vector determines the answer. That is not a test, so I did not do it.
+
+The protocol is a **matched-baseline ensemble**: select every training tissue whose BETSE
+ground-truth mean Vmem lies within ±3 mV of the measured control, apply the perturbation, and
+compare the *distribution* of predicted shifts against the measured shift. Matching on ground truth
+rather than model output keeps baseline selection model-independent. The ensemble spread is an
+honest expression of the inverse problem's degeneracy — many channel vectors give the same resting
+potential and need not respond alike.
+
+### Result: the model predicts ZERO for every gap-junction experiment
+
+| record | ΔV measured | ΔV predicted | error |
+|---|---|---|---|
+| kcnh6 morpholino (zero K_leak) | +20.00 | **+22.23** | 2.23 |
+| Ba²⁺ frog kidney (zero Kir) | +13.00 | +4.53 | 8.47 |
+| Ba²⁺ locust tubule (zero Kir) | −18.00 | +16.65 | 34.65 |
+| carbenoxolone 100 µM | +3.10 | **+0.000** | 3.10 |
+| carbenoxolone 200 µM | +7.50 | **−0.012** | 7.51 |
+| complete uncoupling | +18.80 | **+0.017** | 18.78 |
+
+Stratified against the 5.78 mV threshold (10% of the 57.8 mV experimental range):
+
+- channel blockade, representable channel: **5.35 mV, MEETS** (n=2)
+- gap-junction blockade: 9.80 mV, fails
+- knowingly unrepresentable tissue: 34.65 mV, fails
+- all: **12.46 mV, fails**
+
+**Complete uncoupling — a measured 18.8 mV depolarization — gives a predicted 0.017 mV.** That is
+not a poor prediction, it is a categorical one: the model has learned that gap junctions do not
+affect Vmem.
+
+**This was predicted in advance by the §11 analysis and is confirmed here from an entirely
+independent direction.** §11 was a statement about within-graph versus across-graph variance in our
+own dataset. This is the same statement arriving as a failure against published measurements the
+model never saw. A dataset diagnostic and an experimental failure agreeing is much stronger than
+either alone, and it makes Experiment C (regenerate training data with spatial structure) the
+unambiguous next step rather than one option among several.
+
+### The pre-registered failure fired
+
+`barium_locust_malpighian` was curated deliberately as a case the model should fail — same reagent
+and nominal target as the frog kidney record, opposite measured sign, because insect Malpighian
+tubules run on an apical V-ATPase we hold at zero. The failure and its reason were written into the
+record's `mapping_assumption` field **before** the model ran. It failed as predicted: 34.65 mV,
+wrong sign. Including a case you expect to fail, and saying so first, is cheap insurance against
+a mapping protocol that can absorb any result.
+
+### The D1 decision has a cost nobody priced
+
+Three of the PRD's four named validation sources perturb targets we cannot represent — two of them
+the channels held at zero under D1. That decision was taken as an accounting convenience to keep an
+8-dimensional interface. **It disconnects the model from most of the literature that would validate
+it.** Logged as D27. The general lesson: choose the parameterization backwards from the validation
+experiments, not forwards from the simulator's configuration surface.
+
+### Coherence State
+Milestone 7 complete. All seven deliverable figures now exist.
+Current tier: 3 | Scaffold: full
+7B performance this milestone: `nexus/data/experimental.py` and `scripts/validate_experimental.py`
+both **first-attempt passes** — the two longest specifications written this session, both stated as
+complete verbatim function bodies. That technique has now produced first-attempt passes on five
+consecutive files.

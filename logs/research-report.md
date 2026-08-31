@@ -43,9 +43,9 @@ Four sub-claims, each independently testable:
 
 | # | Claim | Metric | Status |
 |---|---|---|---|
-| C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met, but see §11** |
+| C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met vs BETSE; vs experiment 12.46 mV against a 5.78 mV threshold — not met (§10.8)** |
 | C2 | Graph structure is necessary | MPNN beats density-only MLP | **Weakly supported in-distribution (0.03 mV, 2.5× noise); not supported OOD (§10.7)** |
-| C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met on tolerance, but see §10.5** |
+| C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met vs BETSE; fails on real gap-junction perturbations (§10.8)** |
 | C4 | Speedup over simulator | inference vs measured BETSE latency | **Met** (§12) |
 
 C1 and C4 are met comfortably. **C2 is not supported**, and §11 argues that the experiment as
@@ -946,6 +946,127 @@ now the project's standard); set `torch.use_deterministic_algorithms(True)` with
 None of this was in the PRD. Its absence is why a 0.03 mV effect was first reported as a 21% win,
 then 6.3%, then a null — **four successive corrections, every one in the direction that made the
 result less impressive.** The pattern, not any individual number, is the methodological finding.
+
+### 10.8 Experimental validation against published measurements (Milestone 7)
+
+#### Protocol
+
+Predicting absolute Vmem from a prose description of a real tissue would require inventing a
+channel-density vector, and the invented vector would determine the answer. That is not a test. The
+protocol is therefore **differential**, using a *matched-baseline ensemble*:
+
+1. Take a measured control potential `V0` and a measured perturbed potential `V1` from the same
+   published experiment, giving `ΔV_exp = V1 − V0`.
+2. Select every training tissue whose **BETSE ground-truth** mean Vmem lies within ±3 mV of `V0`
+   (matching on ground truth, not on model output, so baseline selection is model-independent).
+   Subsample to at most 40 members.
+3. Apply the perturbation to each member using the same operation the dataset's own perturbation
+   families use — zero a channel column, or scale edge conductance.
+4. Predict on baseline and perturbed graph; take the difference. This yields a **distribution** of
+   `ΔV_pred`, whose spread is an honest expression of the degeneracy of the inverse problem: many
+   channel vectors give the same resting potential and need not respond alike.
+
+Curated from the literature by parallel search with **independent adversarial verification of every
+citation and value**: 30 candidate records extracted, 29 confirmed, 1 unverifiable, **0
+fabricated**. All are absolute millivolt measurements from electrode recordings, never uncalibrated
+dye intensity. Full protocol, schema and per-record mapping assumptions:
+[`data/experimental/README.md`](../data/experimental/README.md).
+
+#### Results
+
+Experimental Vmem range across 18 baseline anchors: 57.8 mV (−14.3 to −72.1 mV), so PRD §2's
+10%-of-range threshold is **5.78 mV**. Rendered as figure 7.
+
+| record | mapped operation | ΔV measured | ΔV predicted (median [IQR]) | error | sign |
+|---|---|---|---|---|---|
+| `kcnh6_morpholino_xenopus` | zero `K_leak` | +20.00 | **+22.23** [+10.9, +30.9] | **2.23** | ✔ |
+| `barium_frog_kidney` | zero `Kir` | +13.00 | +4.53 [+2.8, +12.7] | 8.47 | ✔ |
+| `barium_locust_malpighian` | zero `Kir` | −18.00 | +16.65 [+12.6, +23.7] | 34.65 | ✘ |
+| `carbenoxolone_100uM_hipsc_cm` | scale gj ×0.5 | +3.10 | **+0.000** | 3.10 | ✘ |
+| `carbenoxolone_200uM_hipsc_cm` | scale gj ×0.2 | +7.50 | **−0.012** | 7.51 | ✘ |
+| `isolated_vs_monolayer_hipsc_cm` | scale gj ×0.0 | +18.80 | **+0.017** | 18.78 | ✔ |
+
+Stratified:
+
+| stratum | n | MAE | vs 5.78 mV threshold |
+|---|---|---|---|
+| Channel blockade on a **representable** channel | 2 | **5.35 mV** | **meets** |
+| Gap-junction blockade | 3 | 9.80 mV | fails |
+| Channel blockade on a **knowingly unrepresentable** tissue | 1 | 34.65 mV | fails |
+| **All records** | 6 | **12.46 mV** | **fails** |
+
+#### The gap-junction result is the finding
+
+**All three gap-junction experiments predict essentially zero.** Complete uncoupling — a measured
+18.8 mV depolarization — produces a predicted change of **0.017 mV**. That is not a poor
+prediction; it is a categorical one. The model has learned that gap junctions do not affect Vmem.
+
+**This was predicted in advance by §11, and it is independently confirmed here against measurements
+the model never saw.** In a spatially uniform tissue the junctional term `Σ_j g_ij (V_i − V_j)`
+vanishes in the bulk for *any* conductance. Every training tissue is spatially uniform (per-cell
+density sd exactly 0.000), so conductance had no effect on the target during training, so the
+network correctly learned to ignore it. Confronted with real tissue where uncoupling shifts Vmem by
+19 mV, it predicts 0.02 mV.
+
+The diagnostic in §11 was a statement about a dataset. This is the same statement arriving as an
+experimental failure, from an entirely independent direction. Together they are much stronger
+evidence than either alone, and they identify the fix precisely: Experiment C.
+
+#### The locust counterexample worked as designed
+
+`barium_locust_malpighian` was curated *deliberately* as a case the model should fail. Same reagent
+and nominal target as `barium_frog_kidney` — 1 mM Ba²⁺ blocking a K⁺ conductance — but the measured
+shift has the **opposite sign** (−18 mV, hyperpolarizing). Insect Malpighian tubules are driven by
+an apical V-ATPase, which this parameterization holds at exactly zero (D1). The model predicts
++16.65 mV, wrong by 34.65 mV and wrong in sign, exactly as documented before the run.
+
+The lesson is not that the model is bad here. It is that **"block a K⁺ channel" is not a
+tissue-independent operation**, and a channel-density vector missing the tissue's dominant
+electrogenic pump cannot represent that tissue at all.
+
+#### What could not be tested, and why that matters
+
+Three of PRD §4.2's four named primary sources perturb targets absent from this parameterization:
+
+| PRD source | Target | Status |
+|---|---|---|
+| Beane et al. 2011, planaria | H⁺/K⁺-ATPase | **not representable** (D1) |
+| Pai et al. 2018, nicotine | nicotinic ACh receptor | **not representable** |
+| Pai et al. 2018, HCN2 rescue | HCN2 | **not representable** |
+| Adams & Levin 2012 | V-ATPase | **not representable** (D1) |
+
+The decision to hold `HKATP` and `VATP` at zero (D1) was taken as a cheap accounting convenience —
+two constant columns to preserve an 8-dimensional interface. It turns out to **disconnect the model
+from most of the literature that would validate it.** That is the second finding of this milestone.
+
+#### Verdict on Success Criterion 1
+
+PRD §2 asks for MAE ≤ 10% of experimental Vmem range. **Overall: 12.46 mV against a 5.78 mV
+threshold — not met.** On the subset the parameterization can actually represent it is met
+(5.35 mV), but that subset is *n* = 2 and the claim should not be leaned on.
+
+The honest statement is that **the model reproduces measured responses for perturbations of
+channels it models, and fails for gap-junction perturbations and for tissues whose dominant
+transporter it omits — both failures predicted in advance and both explained.**
+
+#### Limitations specific to this section
+
+1. **Six records is a small validation set**, from a literature that mostly publishes voltage as
+   uncalibrated colormaps rather than tabulated millivolts.
+2. **PRD §4.2 specifies digitizing Vmem from published figures** with WebPlotDigitizer. Reading
+   pixel values out of figure images was not available here, so only numbers stated in text or
+   tables were used. This is the main reason coverage is thin.
+3. **The carbenoxolone scale factors (×0.5, ×0.2) are placeholders.** The fraction of junctional
+   conductance remaining under 100 and 200 µM is not reported. Only the *sign* and the dose
+   *ordering* of those two records are meaningful; their magnitudes are not a test. The
+   complete-uncoupling record has no such free parameter and is the clean gap-junction test.
+4. **Morpholino knockdown is modelled as complete loss**, so the `kcnh6` prediction is an upper
+   bound on what a partial knockdown should give. Its close agreement (+22.2 vs +20.0) may
+   therefore be partly fortuitous.
+5. **The comparison inherits BETSE's own error.** BETSE's published validation is a single
+   preparation — *Xenopus* oocyte, −39.1 mV measured against −37.6 mV predicted, < 10% difference
+   (Pietak & Levin 2016, Table 2, from Costa et al. 1989). Our model cannot beat BETSE against
+   biology; total error is BETSE-vs-biology plus model-vs-BETSE (~0.8 mV, §10.3).
 
 ## 11. Analysis: the training distribution has no spatial structure
 

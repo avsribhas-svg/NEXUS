@@ -1,0 +1,91 @@
+{
+  "summary": {
+    "n_records": 6,
+    "n_evaluated": 6,
+    "delta_mae_mv": 12.457584285736084,
+    "n_sign_correct": 3,
+    "experimental_vmem_range_mv": 57.8,
+    "accuracy_threshold_mv": 5.78,
+    "meets_threshold": false
+  },
+  "records": [
+    {
+      "id": "kcnh6_morpholino_xenopus",
+      "family": "channel_blockade",
+      "operation": "zero_channel:K_leak",
+      "n_matched": 40,
+      "delta_exp_mv": 20.0,
+      "delta_pred_median_mv": 22.232522010803223,
+      "delta_pred_q1_mv": 10.876606941223145,
+      "delta_pred_q3_mv": 30.887370586395264,
+      "abs_error_mv": 2.2325220108032227,
+      "sign_correct": true,
+      "status": "ok"
+    },
+    {
+      "id": "barium_frog_kidney",
+      "family": "channel_blockade",
+      "operation": "zero_channel:Kir",
+      "n_matched": 40,
+      "delta_exp_mv": 13.0,
+      "delta_pred_median_mv": 4.531669616699219,
+      "delta_pred_q1_mv": 2.7484970092773438,
+      "delta_pred_q3_mv": 12.661291599273682,
+      "abs_error_mv": 8.468330383300781,
+      "sign_correct": true,
+      "status": "ok"
+    },
+    {
+      "id": "barium_locust_malpighian",
+      "family": "channel_blockade",
+      "operation": "zero_channel:Kir",
+      "n_matched": 40,
+      "delta_exp_mv": -18.0,
+      "delta_pred_median_mv": 16.650602340698242,
+      "delta_pred_q1_mv": 12.638131141662598,
+      "delta_pred_q3_mv": 23.736254692077637,
+      "abs_error_mv": 34.65060234069824,
+      "sign_correct": false,
+      "status": "ok"
+    },
+    {
+      "id": "carbenoxolone_100uM_hipsc_cm",
+      "family": "gj_blockade",
+      "operation": "scale_gj:0.5",
+      "n_matched": 40,
+      "delta_exp_mv": 3.1,
+      "delta_pred_median_mv": 0.0,
+      "delta_pred_q1_mv": -0.020078659057617188,
+      "delta_pred_q3_mv": 0.06156349182128906,
+      "abs_error_mv": 3.1,
+      "sign_correct": false,
+      "status": "ok"
+    },
+    {
+      "id": "carbenoxolone_200uM_hipsc_cm",
+      "family": "gj_blockade",
+      "operation": "scale_gj:0.2",
+      "n_matched": 40,
+      "delta_exp_mv": 7.5,
+      "delta_pred_median_mv": -0.011537551879882812,
+      "delta_pred_q1_mv": -0.05795860290527344,
+      "delta_pred_q3_mv": 0.16199970245361328,
+      "abs_error_mv": 7.511537551879883,
+      "sign_correct": false,
+      "status": "ok"
+    },
+    {
+      "id": "isolated_vs_monolayer_hipsc_cm",
+      "family": "gj_blockade",
+      "operation": "scale_gj:0.0",
+      "n_matched": 40,
+      "delta_exp_mv": 18.8,
+      "delta_pred_median_mv": 0.017486572265625,
+      "delta_pred_q1_mv": -0.06972312927246094,
+      "delta_pred_q3_mv": 0.12043380737304688,
+      "abs_error_mv": 18.782513427734376,
+      "sign_correct": true,
+      "status": "ok"
+    }
+  ]
+}
