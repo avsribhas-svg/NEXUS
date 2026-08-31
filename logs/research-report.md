@@ -804,6 +804,103 @@ Readings:
 - **The MPNN is substantially *worse* on `exogenous_expression` / Ca (−48%)**, the one clear
   regression. With a single seed this could be noise, but it is large enough that multi-seed
   runs (Experiment D) are needed before any of this table is quoted.
+### 10.6 Ablations (PRD §7.4)
+
+All at seed 42, identical training path, early stopping on validation MAE. Rendered as figure 5.
+
+| tag | arch | K | n_train | norm | params | test_id MAE | test_ood MAE | epochs |
+|---|---|---|---|---|---|---|---|---|
+| `abl_mlp_baseline` | mlp | — | 8000 | yes | 26,625 | 0.8119 | 1.2165 | 56 |
+| `abl_depth_k2` | mpnn | 2 | 8000 | yes | 234,497 | 0.7792 | 1.1763 | 68 |
+| `abl_depth_k4` | mpnn | 4 | 8000 | yes | 449,025 | **0.7474** | **1.0455** | 138 |
+| `abl_depth_k6` | mpnn | 6 | 8000 | yes | 663,553 | 0.7923 | 1.1951 | 59 |
+| `abl_depth_k8` | mpnn | 8 | 8000 | yes | 878,081 | 0.7589 | 1.0703 | 100 |
+| `abl_size_1000` | mpnn | 6 | 1000 | yes | 663,553 | 0.8862 | 1.4060 | 87 |
+| `abl_size_2000` | mpnn | 6 | 2000 | yes | 663,553 | 0.8169 | 1.3341 | 94 |
+| `abl_size_4000` | mpnn | 6 | 4000 | yes | 663,553 | 0.7875 | 1.1973 | 94 |
+| `abl_size_8000` | mpnn | 6 | 8000 | yes | 663,553 | 0.7666 | 1.1413 | 81 |
+| `abl_no_normalize` | mpnn | 6 | 8000 | **no** | 663,553 | 0.7660 | 1.1055 | 80 |
+| `abl_physics_loss` | mpnn | 6 | 8000 | yes | 663,553 | 0.7827 | 1.1259 | 64 |
+
+**Read this table against the noise floor in §10.7, which is ±0.031 mV on `test_id` and ±0.054 mV
+on `test_ood` for a *fixed* configuration and seed.** Most of the differences below are smaller
+than that.
+
+**Training-set size is the only ablation with a clearly resolvable effect.** 0.8862 → 0.8169 →
+0.7875 → 0.7666 across 1K → 8K is monotonic and spans 0.12 mV, roughly 4× the noise floor.
+Doubling data buys progressively less; the curve is flattening but has not saturated at 8K.
+
+**Depth is not interpretable at n = 1 per depth.** K = 4 is nominally best on both splits and
+K = 6 nominally worst, which is non-monotonic and therefore suspicious. On `test_ood` the K = 4 and
+K = 8 results (1.0455, 1.0703) do sit below the entire observed K = 6 range (1.1413–1.1951) by more
+than that range's width, which is the one depth signal that might survive replication. **The
+correct reading today is that the depth sweep needs 3–5 replicates per depth before any claim, and
+the PRD's "optimal propagation depth" question is unanswered.**
+
+**Input normalization does nothing.** `abl_no_normalize` (0.7660) is indistinguishable from the
+normalized runs (0.7615–0.7923). Given the network's first layer is a learned linear map followed
+by LayerNorm, a fixed per-feature rescaling is largely absorbed — this is a mildly interesting
+negative but not a surprising one.
+
+**The physics auxiliary loss does nothing**, exactly as predicted in §7.3. 0.7827 sits inside the
+fixed-config range. On spatially uniform tissues the junctional residual it penalizes is ~0
+everywhere by construction, so the term supplies almost no gradient. This ablation is not a test of
+the regularizer; it is another consequence of §11. It should be re-run after the training
+distribution is fixed.
+
+### 10.7 Reproducibility: the MPNN's noise floor exceeds the effect being measured
+
+Three runs in this project share an identical configuration — MPNN, K = 6, 8000 training graphs,
+seed 42, normalized, no physics loss — because the ablation grid re-ran the base configuration
+under two different tags. They were not intended as replicates. They are the most informative
+result in the milestone.
+
+| run | test_id MAE | test_ood MAE | epochs |
+|---|---|---|---|
+| `mpnn_seed42` | 0.7615 | 1.1642 | 91 |
+| `abl_size_8000` | 0.7666 | 1.1413 | 81 |
+| `abl_depth_k6` | 0.7923 | 1.1951 | 59 |
+| **spread** | **0.0308** | **0.0538** | **32** |
+
+Compare against the effect the project set out to measure:
+
+| quantity | magnitude |
+|---|---|
+| MPNN − MLP, `test_id`, mean of 3 seeds (§10.3) | **0.0305 mV** |
+| MPNN − MLP, `test_ood`, mean of 3 seeds (§10.3) | **0.0285 mV** |
+| MPNN run-to-run spread at **fixed seed and configuration** | **0.0308 / 0.0538 mV** |
+
+**The run-to-run variance of the MPNN at a fixed seed is as large as the entire measured advantage
+of the MPNN over the MLP.** The 3.8% in-distribution margin is not merely statistically weak across
+seeds — it is below the reproducibility threshold of a single configuration.
+
+The MLP, by contrast, **reproduces exactly.** `mlp_seed42` and `abl_mlp_baseline` are the same
+configuration and returned bit-identical results: 0.8119 / 1.2165, both stopping at epoch 56.
+
+That asymmetry identifies the mechanism. The MPNN aggregates messages with `index_add_`, which on
+CUDA is implemented with atomic floating-point additions applied in nondeterministic order. Floating
+-point addition is not associative, so the aggregation result differs run to run at the last bits,
+and 6 layers × 81 epochs of training amplifies that into different optimization trajectories —
+visible in the epoch counts, which range from 59 to 91 for identical inputs. `BaselineMLP` contains
+only dense linear layers, which are deterministic on CUDA, so it reproduces exactly.
+
+**Consequences for everything else in this report:**
+
+1. The §10.3 seed study measured seed variance *plus* CUDA nondeterminism, not seed variance alone.
+   Its reported standard deviations are inflated by an unknown amount, and its paired per-seed
+   differences cannot be attributed to the seed.
+2. The §10.4 degree analysis and §10.5 OOD cross-tabulation are single-run and therefore carry an
+   unquantified ±0.03 mV per cell of run noise. The large effects there (the 3× boundary/interior
+   ratio, the 6.5× OOD difficulty spread) are far above it and survive. The small ones — including
+   the "MPNN's advantage is 2× larger at boundary cells" residual signal — do not.
+3. Every ablation difference below ~0.06 mV in §10.6 is uninterpretable.
+
+**Recommended remediation**, in order of cost: report all model results as a median over ≥3
+replicates at fixed seed; set `torch.use_deterministic_algorithms(True)` with
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` and accept the throughput loss on scatter operations; or replace
+`index_add_` with a deterministic segment-sum over a sorted edge list. **None of this was in the
+PRD, and its absence is why a null result initially looked like a 6.3% win.**
+
 ## 11. Analysis: the training distribution has no spatial structure
 
 This is the central finding and it reframes every number in §10. It was found by asking a single
@@ -926,17 +1023,23 @@ actually wait for, not just the forward pass.
 Deliberately **not** run concurrently with the ablation sweep, even though one is CPU-bound and the
 other GPU-bound — concurrency is what corrupted the original figure.
 
-*Full 100-configuration run in progress at time of writing.* Smoke test on 2 configurations:
+**100 of 100 configurations completed, zero failures.** Tissue size median 150 cells (q1 85,
+q3 275). Rendered as figure 4.
 
-| | median | q1 | q3 | speedup vs BETSE |
-|---|---|---|---|---|
-| BETSE (serial) | 42.0 s | 41.2 s | 47.5 s | 1× |
-| Model, CPU | 11.7 ms | — | 15.0 ms | **3,359×** |
-| Model, CUDA | 4.8 ms | — | 6.3 ms | **8,123×** |
+| | median | q1 | q3 | mean | min | max | speedup |
+|---|---|---|---|---|---|---|---|
+| BETSE, serial | **41.32 s** | 38.55 s | 48.81 s | 44.30 s | 33.73 s | 71.87 s | 1× |
+| Model, CPU | **22.27 ms** | 18.29 ms | 30.50 ms | — | — | — | **1,856×** |
+| Model, CUDA | **7.40 ms** | 6.51 ms | 8.31 ms | — | — | — | **5,582×** |
 
-Claim C4 is met by a wide margin under any reasonable accounting. The honest characterization is
-**three to four orders of magnitude**, reported with the measurement conditions attached rather
-than as a bare ratio.
+Claim **C4 is met** by a wide margin. The honest characterization is **three to four orders of
+magnitude**, reported with measurement conditions attached rather than as a bare ratio.
+
+Two caveats worth carrying into any writeup. The BETSE figure includes ~4 s of process startup per
+simulation that a library-level integration would avoid, so it is a fair measure of *our* pipeline
+rather than of the solver alone. And the comparison is not like-for-like in output: BETSE computes
+a full time course of concentrations and voltages, of which we keep one field at one instant. The
+model is not a faster simulator; it is a fast approximation of one scalar the simulator produces.
 
 ## 13. Planned experiments
 
