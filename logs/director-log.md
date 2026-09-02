@@ -1271,3 +1271,30 @@ The sampler heterogeneity change was designed and prompted in Session 4 but neve
 - v1 data preserved intact at data/synthetic/ as uniform control arm
 
 ### Milestone Status: v2 generation in progress
+
+
+## [2026-09-02] v2 Training: MPNN vs MLP Head-to-Head
+
+### Task: Retrain both models on v2 heterogeneous dataset
+- v2 dataset: 13800 configs, spatial heterogeneity (sinusoidal per-cell modulation)
+- Splits: train 8000, val 1000, test_id 1000, test_ood 2000
+
+### MPNN (663K params, 67 epochs, 860s on RTX 4050)
+- train MAE 1.049 mV, R2 0.985
+- val MAE 1.094 mV, R2 0.981
+- test_id MAE 1.070 mV, R2 0.983
+- test_ood MAE 1.816 mV, R2 0.961
+
+### MLP (26K params, 35 epochs, 47s on RTX 4050)
+- train MAE 2.991 mV, R2 0.919
+- val MAE 3.017 mV, R2 0.913
+- test_id MAE 3.008 mV, R2 0.915
+- test_ood MAE 3.478 mV, R2 0.917
+
+### Result: GRAPH HYPOTHESIS CONFIRMED
+- MPNN beats MLP 2.8x on test_id MAE (1.070 vs 3.008 mV)
+- MPNN beats MLP 1.9x on test_ood MAE (1.816 vs 3.478 mV)
+- With spatial heterogeneity, gap junction topology carries signal the MLP cannot access
+- v1 showed no MPNN advantage because uniform tissues gave the graph nothing to learn
+
+### Milestone Status: COMPLETE
