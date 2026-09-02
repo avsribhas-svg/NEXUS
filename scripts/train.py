@@ -10,12 +10,19 @@ import inspect
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+CHANNEL_MAXES = torch.tensor([50.0, 30.0, 20.0, 10.0, 15.0, 30.0, 10.0, 10.0], dtype=torch.float32)
+
 from nexus.data.dataset import BioelectricDataset
 from nexus.model.mpnn import MPNN
 from nexus.model.baseline import BaselineMLP
 from nexus.training.trainer import Trainer
 from nexus.training.config import TrainingConfig
 from nexus.evaluation.metrics import compute_mae, compute_r_squared
+
+def denormalize(data):
+    data.x = data.x * CHANNEL_MAXES
+    data.edge_attr = data.edge_attr * 50.0
+    return data
 
 def evaluate(model, loader, device) -> tuple:
     model.eval()
@@ -44,6 +51,11 @@ def main() -> int:
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--out", type=str, default="outputs")
+    parser.add_argument("--n-layers", type=int, default=6)
+    parser.add_argument("--train-size", type=int, default=0)
+    parser.add_argument("--no-normalize", action="store_true")
+    parser.add_argument("--physics-weight", type=float, default=0.0)
+    parser.add_argument("--tag", type=str, default="")
     args = parser.parse_args()
 
     device = args.device
@@ -54,10 +66,15 @@ def main() -> int:
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    train_ds = BioelectricDataset(root=args.data, split="train")
-    val_ds = BioelectricDataset(root=args.data, split="val")
-    test_id_ds = BioelectricDataset(root=args.data, split="test_id")
-    test_ood_ds = BioelectricDataset(root=args.data, split="test_ood")
+    tf = denormalize if args.no_normalize else None
+    train_ds = BioelectricDataset(root=args.data, split="train", transform=tf)
+    val_ds = BioelectricDataset(root=args.data, split="val", transform=tf)
+    test_id_ds = BioelectricDataset(root=args.data, split="test_id", transform=tf)
+    test_ood_ds = BioelectricDataset(root=args.data, split="test_ood", transform=tf)
+
+    if args.train_size > 0 and args.train_size < len(train_ds):
+        train_ds = train_ds[:args.train_size]
+
     print("splits: train %d val %d test_id %d test_ood %d"
           % (len(train_ds), len(val_ds), len(test_id_ds), len(test_ood_ds)), flush=True)
 
@@ -66,15 +83,19 @@ def main() -> int:
     test_id_loader = DataLoader(test_id_ds, batch_size=args.batch_size)
     test_ood_loader = DataLoader(test_ood_ds, batch_size=args.batch_size)
 
-    model = MPNN(n_channels=8) if args.arch == "mpnn" else BaselineMLP(n_channels=8)
+    if args.arch == "mpnn":
+        model = MPNN(n_channels=8, n_layers=args.n_layers)
+    else:
+        model = BaselineMLP(n_channels=8)
     n_params = sum(p.numel() for p in model.parameters())
     print("arch %s, %d parameters" % (args.arch, n_params), flush=True)
 
-    run_name = "%s_seed%d" % (args.arch, args.seed)
+    run_name = args.tag if args.tag else "%s_seed%d" % (args.arch, args.seed)
     run_dir = os.path.join(args.out, run_name)
     os.makedirs(run_dir, exist_ok=True)
     config = TrainingConfig(lr=args.lr, max_epochs=args.epochs, patience=args.patience,
-                            checkpoint_dir=run_dir, device=device)
+                            checkpoint_dir=run_dir, device=device,
+                            physics_loss_weight=args.physics_weight)
 
     t0 = time.time()
     trainer = Trainer(model=model, config=config)
@@ -94,6 +115,11 @@ def main() -> int:
         "arch": args.arch,
         "seed": args.seed,
         "device": device,
+        "tag": run_name,
+        "n_layers": args.n_layers if args.arch == "mpnn" else None,
+        "train_size": len(train_ds),
+        "normalized": not args.no_normalize,
+        "physics_weight": args.physics_weight,
         "n_parameters": int(n_params),
         "epochs_run": len(history["train_loss"]),
         "train_seconds": float(train_seconds),

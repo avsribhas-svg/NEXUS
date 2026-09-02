@@ -10,3 +10,4 @@ class TrainingConfig:
     weight_decay: float = 1e-4
     min_lr: float = 1e-5
     device: str = "cpu"
+    physics_loss_weight: float = 0.0

@@ -92,19 +92,24 @@ perturbed channel or they mislead.
 
 ## Dataset
 
-### D8 [!] — Baseline training tissues are spatially uniform
-*Not specified either way by the PRD. This is the most consequential deviation in the project.*
+### D8 [I] — Baseline training tissues were spatially uniform (v1); fixed in v2
+*Not specified either way by the PRD. This was the most consequential deviation in the project.*
 
-`ConfigSampler` draws one density vector per configuration and tiles it across every cell
-(`np.tile(per_channel, (n_cells, 1))`). Perturbation configs introduce per-cell variation;
-baseline configs never do. Since train, val and test_id are entirely baseline, **per-cell
-density sd is exactly 0.000 in every training tissue.**
+**v1 (uniform):** `ConfigSampler` drew one density vector per configuration and tiled it across
+every cell (`np.tile(per_channel, (n_cells, 1))`). Per-cell density sd was exactly 0.000 in
+every training tissue. ~99% of Vmem variance was between tissues (14.83 vs 1.33 mV). The
+junctional term vanished in the bulk, so the graph carried almost no in-distribution information.
 
-**Consequence:** ~99% of Vmem variance is between tissues rather than within them (14.83 vs
-1.33 mV). For a spatially uniform tissue the junctional term `Σ_j g_ij (V_i − V_j)` vanishes in
-the bulk for *any* conductance, so the graph carries almost no in-distribution information. The
-Phase 1 hypothesis that topology is necessary **cannot be tested on this dataset.** Fixing it
-requires regenerating training data with intra-tissue spatial structure (~27 h).
+**v2 (heterogeneous, 2026-08-31):** `ConfigSampler` now adds smooth sinusoidal per-cell
+modulation to all 6 mapped channels (random wavenumber 1–3, random phase, 15–50% amplitude).
+Modulation runs BEFORE unmapped-channel zeroing and BEFORE perturbation application. Verified:
+Nav per-cell sd = 4–10 across generated tissues, unmapped channels stay at 0. BETSE sims take
+~2× longer to converge on heterogeneous tissues (84s vs 42s mean). v1 data preserved intact as
+the uniform control arm at `data/synthetic/`; v2 generation into `data/synthetic_v2/` (seed 1000,
+13800 configs, 12 workers, ~27h ETA).
+
+**Status:** v2 generation in progress. The Phase 1 graph-necessity hypothesis can only be tested
+after retraining on v2 data.
 
 ### D9 [L] — `exogenous_expression` confounds two kinds of extrapolation
 The perturbation sets 25% of cells to 4× the nominal channel maximum. The dataset normalizer

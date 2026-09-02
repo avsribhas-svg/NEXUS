@@ -7,33 +7,44 @@ UNMAPPED_CHANNEL_INDICES = (6, 7)
 SPATIAL_CHANNEL_INDICES = (0, 3, 4)
 
 class ConfigSampler:
-    def __init__(self, seed=None, zero_unmapped_channels=True):
+    def __init__(self, seed=None, zero_unmapped_channels=True, spatial_heterogeneity=True):
         self.seed = seed
         self.rng = np.random.default_rng(seed)
         self.zero_unmapped_channels = zero_unmapped_channels
+        self.spatial_heterogeneity = spatial_heterogeneity
 
     def sample(self, n: int, perturbation_type=None) -> list:
         sampler = qmc.LatinHypercube(d=11, seed=self.seed)
         u = sampler.random(n)
-        
+
         configs = []
         for i in range(n):
             n_cells = int(round(float(np.exp(np.log(50.0) + u[i, 0] * (np.log(500.0) - np.log(50.0))))))
             n_cells = int(min(500, max(50, n_cells)))
-            
+
             cell_radius = float(5.0 + u[i, 1] * 10.0)
-            
+
             gj_conductance = float(u[i, 2] * 50.0)
-            
+
             per_channel = (u[i, 3:11] * CHANNEL_MAXES).astype(np.float32)
             channel_densities = np.tile(per_channel, (n_cells, 1)).astype(np.float32)
-            
+
+            if self.spatial_heterogeneity:
+                t = np.arange(n_cells, dtype=np.float64) / max(1.0, float(n_cells - 1))
+                amplitude = float(self.rng.uniform(0.15, 0.50))
+                for ch in range(6):
+                    wavenumber = float(self.rng.integers(1, 4))
+                    phase = float(self.rng.uniform(0.0, 2.0 * np.pi))
+                    modulation = 1.0 + amplitude * np.sin(2.0 * np.pi * wavenumber * t + phase)
+                    column = channel_densities[:, ch].astype(np.float64) * modulation
+                    channel_densities[:, ch] = np.clip(column, 0.0, float(CHANNEL_MAXES[ch])).astype(np.float32)
+
             if self.zero_unmapped_channels:
                 for ch_index in UNMAPPED_CHANNEL_INDICES:
                     channel_densities[:, ch_index] = 0.0
-            
+
             n_perturbable = 6 if self.zero_unmapped_channels else 8
-            
+
             if perturbation_type == "channel_blockade":
                 ch = int(self.rng.integers(0, n_perturbable))
                 channel_densities[:, ch] = 0.0
@@ -46,7 +57,7 @@ class ConfigSampler:
             elif perturbation_type == "spatial_gradient":
                 ch = int(SPATIAL_CHANNEL_INDICES[self.rng.integers(0, len(SPATIAL_CHANNEL_INDICES))])
                 channel_densities[:, ch] = (np.linspace(0.0, 1.0, n_cells) * float(CHANNEL_MAXES[ch])).astype(np.float32)
-            
+
             config = {
                 "config_id": f"cfg_{i:05d}",
                 "n_cells": n_cells,
@@ -56,7 +67,7 @@ class ConfigSampler:
                 "perturbation_type": perturbation_type,
                 "is_perturbation": perturbation_type is not None,
             }
-            
+
             configs.append(config)
-        
+
         return configs

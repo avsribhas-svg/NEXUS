@@ -2,6 +2,7 @@ import os
 import inspect
 import torch
 from nexus.model.losses import mae_loss
+from nexus.model.losses import physics_auxiliary_loss
 
 class Trainer:
     def __init__(self, model, config):
@@ -36,6 +37,9 @@ class Trainer:
                 self.optimizer.zero_grad()
                 pred = self._predict(batch)
                 loss = mae_loss(pred, batch.y.to(self.device))
+                w = getattr(self.config, "physics_loss_weight", 0.0)
+                if w > 0.0 and self.needs_graph:
+                    loss = loss + w * physics_auxiliary_loss(pred, batch.edge_index, batch.edge_attr.view(-1))
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip_norm)
                 self.optimizer.step()

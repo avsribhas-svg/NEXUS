@@ -1240,3 +1240,34 @@ Current tier: 3 | Scaffold: full
 both **first-attempt passes** — the two longest specifications written this session, both stated as
 complete verbatim function bodies. That technique has now produced first-attempt passes on five
 consecutive files.
+
+
+## [2026-08-31] Session 5: Spatial Heterogeneity and v2 Data Generation
+
+### Context
+Windows rig went offline for ~2 days (Tailscale disconnect due to idle). Reconnected 2026-08-31.
+The sampler heterogeneity change was designed and prompted in Session 4 but never deployed (rig offline).
+
+### Task: Deploy ConfigSampler spatial heterogeneity
+- Instruction sent to 7B: complete rewrite of config_sampler.py adding `spatial_heterogeneity=True` kwarg
+  to __init__, plus sinusoidal per-cell modulation block in sample() (random wavenumber 1-3, random phase,
+  15-50% amplitude per channel, first 6 channels only)
+- 7B response quality: first attempt garbled imports and constants (invented 11-element CHANNEL_MAXES,
+  wrong indices, wrong imports). Second attempt with fully spelled-out constants: perfect.
+- Tests: test_data_pipeline.py 30/30 passed, full suite 87/87 passed (5 betse-deselected)
+- Verification: Nav ch per-cell sd = 10.53 with het, 0.0 without. Unmapped ch6 (HKATP) stays 0.0.
+  Heterogeneity block runs BEFORE unmapped zeroing and BEFORE perturbation application.
+- Notes: the 7B cannot reliably preserve invariant parts of a file while changing specified parts.
+  Giving it the ENTIRE file verbatim (constants included) works; telling it to "keep X unchanged" does not.
+  This is a fundamental limitation at 7B scale — the attention budget can't maintain both the invariant
+  constraint and the modification instruction simultaneously.
+
+### Task: Launch v2 data generation
+- Command: `python scripts/generate_dataset.py --out data/synthetic_v2/_staged --n-baseline 11500 --n-per-perturbation 575 --jobs 12 --seed 1000`
+- Launched as detached process via Win32_Process.Create (PID 21928)
+- Expected duration: ~13h (13800 configs at ~42s/sim serial, 12 workers)
+- Sleep disabled on AC power (`powercfg -change -standby-timeout-ac 0`)
+- Ephemeral port range already widened from prior session (20000-65535)
+- v1 data preserved intact at data/synthetic/ as uniform control arm
+
+### Milestone Status: v2 generation in progress
