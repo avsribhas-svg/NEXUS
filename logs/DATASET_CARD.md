@@ -22,8 +22,8 @@ description of this data, figure caption, or write-up. Do not describe it as ste
 ## Why there is no steady state to converge to
 
 Measured directly: three configurations were re-simulated with the `init` phase extended to 40 s,
-sampled every 2 s, recording the per-interval maximum |ΔVmem| and the fraction of cells meeting the
-PRD §4.1.4 criterion of < 0.1 mV drift.
+sampled every 2 s, recording the per-interval maximum |dVmem| and the fraction of cells meeting the
+PRD sec 4.1.4 criterion of < 0.1 mV drift.
 
     base_000001 (n=261)
       t        2s    6s   12s   20s   28s   36s
@@ -56,7 +56,7 @@ relaxation:
 longer does not converge the result; it integrates more concentration drift. Extending `init` from
 5 s to 40 s costs roughly 8x the compute and still leaves `frac<.1` at 0.00 for `base_000001`.
 
-**PRD §4.1.4's convergence criterion is therefore unsatisfiable as written for this parameter
+**PRD sec 4.1.4's convergence criterion is therefore unsatisfiable as written for this parameter
 space.** This is a property of the ground-truth simulator under random sampling, not a defect in the
 generation pipeline.
 
@@ -171,7 +171,7 @@ Storing a varying input whose target does not respond is worse than storing a un
 it would teach a model that such gradients have no effect.
 
 **`ConfigSampler` therefore restricts `spatial_gradient` and `exogenous_expression` to Nav, Ca and
-Cl** (`SPATIAL_CHANNEL_INDICES = (0, 3, 4)`). This is a deliberate narrowing of PRD §4.1.1, which
+Cl** (`SPATIAL_CHANNEL_INDICES = (0, 3, 4)`). This is a deliberate narrowing of PRD sec 4.1.1, which
 does not restrict which channel a spatial perturbation targets. The alternative was to let roughly
 half of those perturbations be silently inert.
 
@@ -206,7 +206,7 @@ Verified: no `config_id` appears in two splits; train is entirely baseline; test
 perturbation; every sampled file carries the eight required keys with Vmem inside [-120, 60] mV.
 Cell counts span 40 to 490, median 150. Total 0.11 GB across 12,000 files.
 
-The anticipated failure rate of 5-15% (PRD §11.4) did not materialise at all. In particular
+The anticipated failure rate of 5-15% (PRD sec 11.4) did not materialise at all. In particular
 `gj_blockade`, expected to be the numerical hazard because zero gap-junction conductance should make
 the gap-junction Laplacian singular and BETSE precomputes a dense inverse of it, produced 575/575
 successes. The reason is that `gj_conductance_to_surface_area` floors the surface area at
@@ -225,8 +225,8 @@ targeted:
 | Cl | 0.996 | 0.533 | 0.48 mV |
 | Ca | 0.997 | 0.496 | 0.58 mV |
 
-The gradients themselves are clean in every case -- `corr(x, density) ≈ 0.997`, spanning the full
-channel range (Nav 0→49.8, Cl 0→15.0, Ca 0→9.98). **The disparity is physics, not a generation
+The gradients themselves are clean in every case -- `corr(x, density) ~ 0.997`, spanning the full
+channel range (Nav 0->49.8, Cl 0->15.0, Ca 0->9.98). **The disparity is physics, not a generation
 defect.** Vmem is governed by `Dm_Na`, so only Nav perturbations move it appreciably. A Cl or Ca
 gradient shifts Vmem by roughly 0.5 mV, under 3% of the 10% -of-range accuracy target and within
 noise of an unperturbed tissue.
@@ -241,28 +241,28 @@ Reporting a single test_ood MAE without that breakdown will mislead.
 
 The generation campaign ran **12 simulations concurrently**, so the 117.2 s mean recorded above is
 a throughput-derived per-task cost, inflated by contention. Measured serially and unloaded, the
-same simulator takes **~42 s** for tissues of 40–232 cells.
+same simulator takes **~42 s** for tissues of 40-232 cells.
 
 Use 117.2 s when reasoning about **how long a generation campaign takes at 12 workers**. Use the
 serial figure when reasoning about **how long one simulation takes**, which is the quantity any
 speedup comparison against a learned model requires. Reporting the former as the latter inflates
-the apparent speedup by roughly 2.5×.
+the apparent speedup by roughly 2.5x.
 
 ---
 
 # v2 Dataset: Spatial Heterogeneity
 
 Generated 2026-09-02. Stored in `data/synthetic_v2/`. This is the dataset that confirmed the
-graph hypothesis (§10.9 of the research report).
+graph hypothesis (sec 10.9 of the research report).
 
 ## What changed from v1
 
 Every baseline tissue now has **per-cell sinusoidal spatial modulation** on all six mapped
 channels:
 
-- A random **wavenumber** (1–3 cycles across the tissue diameter) is drawn per configuration.
-- A random **amplitude** (15–50% of the channel density) is drawn per configuration.
-- Each cell's density is modulated by `1 + amplitude * sin(wavenumber * 2π * x_normalized)`,
+- A random **wavenumber** (1-3 cycles across the tissue diameter) is drawn per configuration.
+- A random **amplitude** (15-50% of the channel density) is drawn per configuration.
+- Each cell's density is modulated by `1 + amplitude * sin(wavenumber * 2pi * x_normalized)`,
   where `x_normalized` maps the cell's x-position to [0, 1] across the tissue extent.
 - The modulation is applied before BETSE mapping, so each cell sees a distinct channel-density
   vector. Gap junctions equalize spatially varying potentials, and the graph carries genuine
@@ -278,7 +278,7 @@ channels:
 | Serial latency | ~42 s | ~95 s |
 | Per-cell density sd (train) | **0.000** | **> 0** |
 
-v2 simulations take roughly 2× longer because heterogeneous tissues converge more slowly in
+v2 simulations take roughly 2x longer because heterogeneous tissues converge more slowly in
 BETSE's integrator.
 
 ## Splits
@@ -300,5 +300,5 @@ Same structure as v1:
 | MLP | 3.008 mV | 3.478 mV |
 
 The MLP's v2 error (3.008 mV) is a ceiling -- it cannot propagate information from neighbors
-through gap junctions. The MPNN's 2.81× advantage is the confirmation of the graph hypothesis
+through gap junctions. The MPNN's 2.81x advantage is the confirmation of the graph hypothesis
 that was undetectable on v1 data (where the margin was 0.03 mV).
