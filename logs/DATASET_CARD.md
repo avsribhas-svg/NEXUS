@@ -247,3 +247,58 @@ Use 117.2 s when reasoning about **how long a generation campaign takes at 12 wo
 serial figure when reasoning about **how long one simulation takes**, which is the quantity any
 speedup comparison against a learned model requires. Reporting the former as the latter inflates
 the apparent speedup by roughly 2.5×.
+
+---
+
+# v2 Dataset: Spatial Heterogeneity
+
+Generated 2026-09-02. Stored in `data/synthetic_v2/`. This is the dataset that confirmed the
+graph hypothesis (§10.9 of the research report).
+
+## What changed from v1
+
+Every baseline tissue now has **per-cell sinusoidal spatial modulation** on all six mapped
+channels:
+
+- A random **wavenumber** (1–3 cycles across the tissue diameter) is drawn per configuration.
+- A random **amplitude** (15–50% of the channel density) is drawn per configuration.
+- Each cell's density is modulated by `1 + amplitude * sin(wavenumber * 2π * x_normalized)`,
+  where `x_normalized` maps the cell's x-position to [0, 1] across the tissue extent.
+- The modulation is applied before BETSE mapping, so each cell sees a distinct channel-density
+  vector. Gap junctions equalize spatially varying potentials, and the graph carries genuine
+  information.
+
+## Generation campaign
+
+| | v1 | v2 |
+|---|---|---|
+| Simulations attempted | 13,800 | 13,800 |
+| Failures | 0 | 0 |
+| Mean wall clock/sim | 117.2 s (12-way parallel) | ~95 s (serial, GPU rig) |
+| Serial latency | ~42 s | ~95 s |
+| Per-cell density sd (train) | **0.000** | **> 0** |
+
+v2 simulations take roughly 2× longer because heterogeneous tissues converge more slowly in
+BETSE's integrator.
+
+## Splits
+
+Same structure as v1:
+
+| split | count | source |
+|---|---|---|
+| train | 8000 | baseline (with spatial modulation) |
+| val | 1000 | baseline (with spatial modulation) |
+| test_id | 1000 | baseline (with spatial modulation) |
+| test_ood | 2000 | 500 each of 4 perturbation families |
+
+## Key result
+
+| arch | test_id MAE | test_ood MAE |
+|---|---|---|
+| MPNN (K=6) | **1.070 mV** | **1.868 mV** |
+| MLP | 3.008 mV | 3.478 mV |
+
+The MLP's v2 error (3.008 mV) is a ceiling — it cannot propagate information from neighbors
+through gap junctions. The MPNN's 2.81× advantage is the confirmation of the graph hypothesis
+that was undetectable on v1 data (where the margin was 0.03 mV).
