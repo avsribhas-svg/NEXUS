@@ -1298,3 +1298,31 @@ The sampler heterogeneity change was designed and prompted in Session 4 but neve
 - v1 showed no MPNN advantage because uniform tissues gave the graph nothing to learn
 
 ### Milestone Status: COMPLETE
+
+## [2026-09-03] v2 Ablation Study Complete — All 11 Variants
+
+### Results Summary
+
+| tag | arch | K | n_train | norm | test_id MAE | test_ood MAE | epochs |
+|---|---|---|---|---|---|---|---|
+| mlp_baseline | mlp | - | 8000 | yes | 3.008 | 3.478 | 35 |
+| depth_k2 | mpnn | 2 | 8000 | yes | 1.417 | 2.254 | 200 |
+| depth_k4 | mpnn | 4 | 8000 | yes | 1.071 | 1.978 | 196 |
+| depth_k6 | mpnn | 6 | 8000 | yes | 0.934 | 1.868 | 200 |
+| depth_k8 | mpnn | 8 | 8000 | yes | 0.824 | 1.674 | 200 |
+| size_1000 | mpnn | 6 | 1000 | yes | 1.273 | 2.327 | 187 |
+| size_2000 | mpnn | 6 | 2000 | yes | 1.179 | 2.134 | 131 |
+| size_4000 | mpnn | 6 | 4000 | yes | 1.030 | 1.884 | 140 |
+| size_8000 | mpnn | 6 | 8000 | yes | 0.945 | 1.713 | 142 |
+| no_normalize | mpnn | 6 | 8000 | no | 0.920 | 1.671 | 162 |
+| physics_loss | mpnn | 6 | 8000 | yes | 0.924 | 1.810 | 200 |
+
+### Key Findings
+- Depth is monotonic on v2 data: more layers = better, coupling length ~4-6 hops
+- Data efficiency: 1K samples already beats 8K MLP by 2.4x
+- Unnormalized marginally better (0.920 vs 0.945)
+- Physics loss: mixed (better test_id, worse test_ood)
+- Graph hypothesis confirmed across all ablation variants
+
+### Phase 1 Status: COMPLETE
+All planned experiments done. Research report updated. Results synced to Mac.
