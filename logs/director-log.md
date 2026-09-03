@@ -1299,7 +1299,7 @@ The sampler heterogeneity change was designed and prompted in Session 4 but neve
 
 ### Milestone Status: COMPLETE
 
-## [2026-09-03] v2 Ablation Study Complete ? All 11 Variants
+## [2026-09-03] v2 Ablation Study Complete: All 11 Variants
 
 ### Results Summary
 

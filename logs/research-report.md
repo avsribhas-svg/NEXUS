@@ -42,7 +42,7 @@ Four sub-claims, each independently testable:
 
 | # | Claim | Metric | Status |
 |---|---|---|---|
-| C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met**; v2 MPNN 1.070 mV (sec 10.9); v1 0.762 mV (sec 10.3). Vs experiment: 12.46 mV against 5.78 mV threshold, not met (sec 10.8) |
+| C1 | Accuracy in-distribution | MAE < 10% of Vmem range | **Met**; v2 MPNN 1.070 mV (sec 10.9); v1 0.767 mV mean over 3 seeds (sec 10.3). Vs experiment: 12.46 mV against 5.78 mV threshold, not met (sec 10.8) |
 | C2 | Graph structure is necessary | MPNN beats density-only MLP | **Confirmed on v2 data (sec 10.9)**. MPNN 1.070 vs MLP 3.008 mV, 2.8x advantage. Not supported on v1 (sec 10.7) |
 | C3 | Generalization to unseen perturbations | OOD MAE within tolerance, per family | **Met vs BETSE; fails on real gap-junction perturbations (sec 10.8)** |
 | C4 | Speedup over simulator | inference vs measured BETSE latency | **Met** (sec 12) |
@@ -572,10 +572,11 @@ This is the left-hand side of the equilibrium relation in sec 1.3. Penalizing it
 predictions toward voltage fields that are self-consistent under the graph Laplacian. It
 returns exactly `0.0` for empty edge sets.
 
-It is implemented and tested but has not yet been used in a training run. The reason is
-sec 11: on spatially uniform tissues the junctional residual is near zero everywhere by
-construction, so the term would contribute almost no gradient. It becomes meaningful only once
-the training set has spatial structure.
+On v1 data (spatially uniform tissues) the junctional residual is near zero everywhere by
+construction, so the term contributed almost no gradient (sec 10.6, `abl_physics_loss`). On v2
+data with spatial heterogeneity the term is no longer vacuous; the v2 ablation (sec 10.9)
+shows marginal test_id improvement (0.924 vs 0.945 mV) but worse test_ood (1.810 vs 1.713 mV),
+suggesting it may over-regularize OOD extrapolation.
 
 ---
 
@@ -591,7 +592,7 @@ the training set has spatial structure.
 | Max epochs | 200 | |
 | Early stopping | patience 20 on validation MAE | best state restored at the end |
 | Loss | MAE in mV | |
-| Seeds | 42 / 137 / 256 | only 42 complete so far |
+| Seeds | 42 / 137 / 256 | v1: all three complete (sec 10.3); v2: seed 42 only |
 | Device | CUDA (RTX 4050 Laptop, 6 GB) | |
 
 The `Trainer` detects whether its model needs graph inputs by inspecting the forward signature
@@ -1095,9 +1096,9 @@ Identical training protocol, seed 42, 200 max epochs, early stopping patience 20
 
 | arch | params | test_id MAE | test_ood MAE | R^2 (test_id) | epochs |
 |---|---|---|---|---|---|
-| **MPNN (K=6)** | 663,553 | **1.070 mV** | **1.868 mV** | 0.9836 | ~140 |
+| **MPNN (K=6)** | 663,553 | **1.070 mV** | **1.816 mV** | 0.983 | 67 |
 | MLP | 26,625 | 3.008 mV | 3.478 mV | 0.9086 | 35 |
-| | | **2.81x better** | **1.86x better** | | |
+| | | **2.81x better** | **1.91x better** | | |
 
 This is the decisive result. On v1 data, the MPNN's advantage was 0.03 mV (3.8%, inside
 noise). On v2 data, with spatial heterogeneity, the advantage is 1.94 mV (64%). The MLP
@@ -1107,7 +1108,7 @@ the spatially varying Vmem field.
 
 The v1 negative and v2 positive together are stronger than either alone. They confirm that
 the graph signal was always present in the physics but absent from the v1 sampling. Fixing the
-sampling (one change: per-cell sinusoidal modulation) restores it by a factor of 94x in effect
+sampling (one change: per-cell sinusoidal modulation) restores it by a factor of ~64x in effect
 size (1.94 mV vs 0.03 mV).
 
 The MLP's v2 error (3.008 mV) is not a failure to learn; it is a ceiling. Within a
@@ -1120,11 +1121,10 @@ Vmem toward its neighbors'. The MPNN can.
 | family | MPNN MAE | MLP MAE | MPNN advantage |
 |---|---|---|---|
 | `channel_blockade` (Nav) | 0.588 | 1.299 | 2.21x |
-| `gj_blockade` | - | - | - |
-| `spatial_gradient` | - | - | - |
-| `exogenous_expression` | - | - | - |
 
-(Full per-channel breakdown was generated; Nav blockade showed the MPNN's clearest advantage.)
+Only `channel_blockade` / Nav has been broken out so far. The remaining three families
+(`gj_blockade`, `spatial_gradient`, `exogenous_expression`) need per-channel extraction from
+the v2 evaluation outputs.
 
 #### v2 ablation study (11 variants, seed 42)
 
@@ -1366,9 +1366,11 @@ results (physics loss is mixed; depth is monotonic). Experiment G remains the ma
    feature name does not mean what it appears to mean.
 8. Spatial perturbations are restricted to three of six channels by simulator interface
    limits, not by design (sec 5.2).
-9. No experimental validation. The model is validated against a simulator; the simulator's
-   fidelity to biology is assumed, not tested (Experiment G).
-10. Single seed. *n* = 1 for every number in sec 10. No error bars yet.
+9. Limited experimental validation (sec 10.8): 6 records, 2/6 sign-correct. The model is
+   validated primarily against BETSE; the simulator's fidelity to biology is assumed, not
+   independently tested (Experiment G).
+10. v2 results are single-seed (*n* = 1). v1 has 3-seed comparisons (sec 10.3) and 6
+    replicates for reproducibility (sec 10.7), but no v2 multi-seed runs exist yet.
 11. Per-cell metric weighting means large tissues dominate the reported averages (sec 9).
 12. The mechanism behind the interior/boundary error asymmetry is not established (sec 10.4).
     It is a property of the data, but which property is untested.
